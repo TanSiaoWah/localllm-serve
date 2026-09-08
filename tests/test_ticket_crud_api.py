@@ -93,6 +93,54 @@ def test_create_ticket_missing_message():
     assert response.status_code == 422
 
 
+def test_create_ticket_whitespace_customer_name_rejected():
+    """POST /tickets/ returns 422 and does not create a ticket when customer_name is whitespace-only."""
+    client = TestClient(app)
+    response = client.post(
+        "/tickets/",
+        json={
+            "customer_name": "   ",
+            "subject": "Shipping question",
+            "message": "When will my order arrive?",
+        },
+    )
+
+    assert response.status_code == 422
+    assert len(tickets) == 2
+
+
+def test_create_ticket_whitespace_subject_rejected():
+    """POST /tickets/ returns 422 and does not create a ticket when subject is whitespace-only."""
+    client = TestClient(app)
+    response = client.post(
+        "/tickets/",
+        json={
+            "customer_name": "Charlie Lee",
+            "subject": "   ",
+            "message": "When will my order arrive?",
+        },
+    )
+
+    assert response.status_code == 422
+    assert len(tickets) == 2
+
+
+def test_create_ticket_whitespace_message_rejected():
+    """POST /tickets/ returns 422 and does not create a ticket when message is whitespace-only."""
+    client = TestClient(app)
+    response = client.post(
+        "/tickets/",
+        json={
+            "customer_name": "Charlie Lee",
+            "subject": "Shipping question",
+            "message": "   ",
+        },
+    )
+
+    assert response.status_code == 422
+    assert len(tickets) == 2
+
+
 def test_update_ticket():
     """PUT /tickets/1 updates the ticket status and keeps other fields."""
     client = TestClient(app)

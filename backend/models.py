@@ -1,13 +1,37 @@
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 
 # Pydantic model defining the expected fields for creating a new ticket
 class TicketCreate(BaseModel):
-    customer_name: str
-    subject: str
-    message: str
+    customer_name: str = Field(min_length=1)
+    subject: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+
+    @field_validator("customer_name")
+    def customer_name_not_whitespace(cls, value: str) -> str:
+        """Strip surrounding whitespace and reject whitespace-only names."""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Customer name cannot be empty")
+        return stripped
+
+    @field_validator("subject")
+    def subject_not_whitespace(cls, value: str) -> str:
+        """Strip surrounding whitespace and reject whitespace-only subjects."""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Subject cannot be empty")
+        return stripped
+
+    @field_validator("message")
+    def message_not_whitespace(cls, value: str) -> str:
+        """Strip surrounding whitespace and reject whitespace-only messages."""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Message cannot be empty")
+        return stripped
 
 
 # Pydantic model for updating tickets — all fields are optional
