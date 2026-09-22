@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import AnalyzeTicketButton from "../../components/AnalyzeTicketButton";
+
 type Ticket = {
   id: number;
   customer_name: string;
@@ -58,6 +60,7 @@ export default async function TicketPage({
           {ticket.message}
         </p>
       </div>
+      <AnalyzeTicketButton ticketId={ticket.id} />
     </main>
   );
 }
