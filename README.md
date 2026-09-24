@@ -46,6 +46,11 @@ Then run the backend from the project root:
 .\.venv\Scripts\Activate.ps1
 uvicorn backend.main:app --reload --port 8080
 ```
+use CMD:
+
+```cmd
+.venv\Scripts\activate.bat
+```
 
 In a second terminal, start the frontend:
 
