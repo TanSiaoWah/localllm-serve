@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import AnalyzeTicketButton from "../../components/AnalyzeTicketButton";
+import AskTicketButton from "../../components/AskTicketButton";
 
 type Ticket = {
   id: number;
@@ -61,6 +62,7 @@ export default async function TicketPage({
         </p>
       </div>
       <AnalyzeTicketButton ticketId={ticket.id} />
+      <AskTicketButton ticketId={ticket.id} question={ticket.message} />
     </main>
   );
 }
