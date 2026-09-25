@@ -14,4 +14,11 @@ tickets = [
         "message": "Why was I charged twice this month?",
         "status": "pending",
     },
+    {
+        "id": 3,
+        "customer_name": "David Tan",
+        "subject": "Payment and order issue",
+        "message": "I placed order ORD-12345 and I was charged RM1299, but I want to confirm whether my payment was successful and what the current status of my order is.",
+        "status": "pending",
+    },
 ]

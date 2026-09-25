@@ -10,7 +10,12 @@ type AskTicketButtonProps = {
 type AskResponse = {
   ticket_id: number;
   answer: string;
-  verified_facts: unknown[];
+  verified_facts: VerifiedFact[];
+};
+
+type VerifiedFact = {
+  tool: string;
+  result: Record<string, unknown>;
 };
 
 export default function AskTicketButton({
@@ -18,6 +23,9 @@ export default function AskTicketButton({
   question,
 }: AskTicketButtonProps) {
   const [answer, setAnswer] = useState("");
+  const [replyText, setReplyText] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [verifiedFacts, setVerifiedFacts] = useState<VerifiedFact[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -42,11 +50,19 @@ export default function AskTicketButton({
 
       const data: AskResponse = await response.json();
       setAnswer(data.answer);
+      setReplyText(data.answer);
+      setVerifiedFacts(data.verified_facts);
     } catch {
       setError("Backend is unavailable.");
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleCopy() {
+    navigator.clipboard.writeText(replyText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }
 
   return (
@@ -64,7 +80,38 @@ export default function AskTicketButton({
       )}
       {answer && (
         <div className="w-full max-w-md rounded-md border border-zinc-200 px-4 py-3 dark:border-zinc-700">
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">{answer}</p>
+          <label className="block text-sm font-medium" htmlFor="ai-reply-draft">
+            AI Reply Draft
+          </label>
+          <textarea
+            id="ai-reply-draft"
+            value={replyText}
+            onChange={(event) => setReplyText(event.target.value)}
+            className="mt-2 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-400"
+            rows={5}
+          />
+          {replyText && (
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="mt-2 rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            >
+              {copied ? "Copied" : "Copy Reply"}
+            </button>
+          )}
+          {verifiedFacts.length > 0 && (
+            <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-700">
+              <p className="text-sm font-medium">Verified facts</p>
+              <ul className="mt-2 space-y-2 text-sm text-zinc-600 dark:text-zinc-400">
+                {verifiedFacts.map((fact, index) => (
+                  <li key={`${fact.tool}-${index}`}>
+                    <span className="font-medium">{fact.tool}:</span>{" "}
+                    {JSON.stringify(fact.result)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </>
