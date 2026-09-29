@@ -2,31 +2,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.main import app
-from backend.data.database import tickets
+from backend.data.db_models import Ticket
 
 
-@pytest.fixture(autouse=True)
-def reset_tickets():
-    """Reset the in-memory ticket list to the original two records before each test."""
-    tickets.clear()
-    tickets.extend(
-        [
-            {
-                "id": 1,
-                "customer_name": "Alice Smith",
-                "subject": "Login issue",
-                "message": "I cannot log into my account.",
-                "status": "open",
-            },
-            {
-                "id": 2,
-                "customer_name": "Bob Jones",
-                "subject": "Billing question",
-                "message": "Why was I charged twice this month?",
-                "status": "pending",
-            },
-        ]
-    )
+def _count_tickets(db_storage):
+    """Return the number of tickets in the isolated test database."""
+    session = db_storage()
+    try:
+        return session.query(Ticket).count()
+    finally:
+        session.close()
 
 
 def test_get_tickets():
@@ -93,7 +78,7 @@ def test_create_ticket_missing_message():
     assert response.status_code == 422
 
 
-def test_create_ticket_whitespace_customer_name_rejected():
+def test_create_ticket_whitespace_customer_name_rejected(db_storage):
     """POST /tickets/ returns 422 and does not create a ticket when customer_name is whitespace-only."""
     client = TestClient(app)
     response = client.post(
@@ -106,10 +91,10 @@ def test_create_ticket_whitespace_customer_name_rejected():
     )
 
     assert response.status_code == 422
-    assert len(tickets) == 2
+    assert _count_tickets(db_storage) == 3
 
 
-def test_create_ticket_whitespace_subject_rejected():
+def test_create_ticket_whitespace_subject_rejected(db_storage):
     """POST /tickets/ returns 422 and does not create a ticket when subject is whitespace-only."""
     client = TestClient(app)
     response = client.post(
@@ -122,10 +107,10 @@ def test_create_ticket_whitespace_subject_rejected():
     )
 
     assert response.status_code == 422
-    assert len(tickets) == 2
+    assert _count_tickets(db_storage) == 3
 
 
-def test_create_ticket_whitespace_message_rejected():
+def test_create_ticket_whitespace_message_rejected(db_storage):
     """POST /tickets/ returns 422 and does not create a ticket when message is whitespace-only."""
     client = TestClient(app)
     response = client.post(
@@ -138,7 +123,7 @@ def test_create_ticket_whitespace_message_rejected():
     )
 
     assert response.status_code == 422
-    assert len(tickets) == 2
+    assert _count_tickets(db_storage) == 3
 
 
 def test_update_ticket():

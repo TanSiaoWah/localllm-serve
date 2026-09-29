@@ -1,24 +1,24 @@
-# In-memory list to store tickets (no database yet)
-tickets = [
-    {
-        "id": 1,
-        "customer_name": "Alice Smith",
-        "subject": "Login issue",
-        "message": "I cannot log into my account.",
-        "status": "open",
-    },
-    {
-        "id": 2,
-        "customer_name": "Bob Jones",
-        "subject": "Billing question",
-        "message": "Why was I charged twice this month?",
-        "status": "pending",
-    },
-    {
-        "id": 3,
-        "customer_name": "David Tan",
-        "subject": "Payment and order issue",
-        "message": "I placed order ORD-12345 and I was charged RM1299, but I want to confirm whether my payment was successful and what the current status of my order is.",
-        "status": "pending",
-    },
-]
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+# Load environment variables from backend/.env (holds DATABASE_URL).
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+# Connection string for the Supabase PostgreSQL database. It is kept in
+# backend/.env (gitignored) and is never logged or printed.
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if DATABASE_URL is None:
+    raise RuntimeError(
+        "DATABASE_URL is not set. Add a DATABASE_URL entry to backend/.env"
+    )
+
+# SQLAlchemy engine and session factory for the Supabase database.
+# Creating the engine does not open a connection; connections are created
+# lazily the first time a query runs.
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
