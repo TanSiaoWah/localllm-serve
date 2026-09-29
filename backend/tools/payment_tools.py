@@ -23,11 +23,15 @@ def get_payment_status(payment_id: str):
     if not payment_id.startswith("PAY-"):
         return {"error": "Invalid payment ID"}
 
-    session = SessionLocal()
     try:
-        payment = payment_repository.get_payment(session, payment_id)
-    finally:
-        session.close()
+        session = SessionLocal()
+        try:
+            payment = payment_repository.get_payment(session, payment_id)
+        finally:
+            session.close()
+    except Exception:
+        # Return a controlled result and never leak database-specific details.
+        return {"error": "Payment service temporarily unavailable"}
 
     if payment is None:
         return {"error": "Payment not found"}

@@ -23,11 +23,15 @@ def get_order_status(order_id: str):
     if not order_id.startswith("ORD-"):
         return {"error": "Invalid order ID"}
 
-    session = SessionLocal()
     try:
-        order = order_repository.get_order(session, order_id)
-    finally:
-        session.close()
+        session = SessionLocal()
+        try:
+            order = order_repository.get_order(session, order_id)
+        finally:
+            session.close()
+    except Exception:
+        # Return a controlled result and never leak database-specific details.
+        return {"error": "Order service temporarily unavailable"}
 
     if order is None:
         return {"error": "Order not found"}

@@ -395,3 +395,130 @@ def test_ask_with_tools_max_turns(monkeypatch, ticket):
         )
 
     assert call_count[0] == 5
+
+
+def _tool_call_response(name, arguments):
+    """Build a fake LLM response that requests a single tool call."""
+    return types.SimpleNamespace(
+        choices=[
+            types.SimpleNamespace(
+                message=types.SimpleNamespace(
+                    content=None,
+                    tool_calls=[
+                        types.SimpleNamespace(
+                            id="call-1",
+                            function=types.SimpleNamespace(
+                                name=name,
+                                arguments=arguments,
+                            ),
+                        )
+                    ],
+                )
+            )
+        ]
+    )
+
+
+def _final_response(answer):
+    """Build a fake LLM response with a plain final answer."""
+    return types.SimpleNamespace(
+        choices=[
+            types.SimpleNamespace(
+                message=types.SimpleNamespace(content=answer, tool_calls=None)
+            )
+        ]
+    )
+
+
+def test_ask_with_tools_payment_service_unavailable(monkeypatch, ticket):
+    """A payment "service unavailable" error is reported to the model, not invented."""
+
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs["messages"])
+        if len(calls) == 1:
+            return _tool_call_response(
+                "get_payment_status", '{"payment_id": "PAY-88888"}'
+            )
+        return _final_response(
+            "The payment could not be verified because the payment service is "
+            "temporarily unavailable."
+        )
+
+    monkeypatch.setattr(
+        tool_agent_service.client.chat.completions, "create", fake_create
+    )
+    monkeypatch.setattr(
+        tool_agent_service,
+        "get_payment_status",
+        lambda payment_id: {"error": "Payment service temporarily unavailable"},
+    )
+
+    result = tool_agent_service.ask_with_tools(ticket, "What is my payment status?")
+
+    assert result["verified_facts"][0]["tool"] == "get_payment_status"
+    assert result["verified_facts"][0]["result"] == {
+        "error": "Payment service temporarily unavailable"
+    }
+    # The error is forwarded to the model so it can answer without inventing data.
+    assert "temporarily unavailable" in calls[1][-1]["content"]
+
+
+def test_ask_with_tools_order_service_unavailable(monkeypatch, ticket):
+    """An order "service unavailable" error is reported to the model, not invented."""
+
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs["messages"])
+        if len(calls) == 1:
+            return _tool_call_response(
+                "get_order_status", '{"order_id": "ORD-12345"}'
+            )
+        return _final_response(
+            "The order could not be verified because the order service is "
+            "temporarily unavailable."
+        )
+
+    monkeypatch.setattr(
+        tool_agent_service.client.chat.completions, "create", fake_create
+    )
+    monkeypatch.setattr(
+        tool_agent_service,
+        "get_order_status",
+        lambda order_id: {"error": "Order service temporarily unavailable"},
+    )
+
+    result = tool_agent_service.ask_with_tools(ticket, "Where is order ORD-12345?")
+
+    assert result["verified_facts"][0]["tool"] == "get_order_status"
+    assert result["verified_facts"][0]["result"] == {
+        "error": "Order service temporarily unavailable"
+    }
+    assert "temporarily unavailable" in calls[1][-1]["content"]
+
+
+def test_ask_with_tools_tool_not_found(monkeypatch, ticket):
+    """A tool "not found" error is reported to the model, not invented."""
+
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs["messages"])
+        if len(calls) == 1:
+            return _tool_call_response(
+                "get_order_status", '{"order_id": "ORD-99999"}'
+            )
+        return _final_response("Order ORD-99999 could not be found.")
+
+    monkeypatch.setattr(
+        tool_agent_service.client.chat.completions, "create", fake_create
+    )
+
+    # Uses the real tool against the isolated test DB, which has no ORD-99999.
+    result = tool_agent_service.ask_with_tools(ticket, "Where is order ORD-99999?")
+
+    assert result["verified_facts"][0]["tool"] == "get_order_status"
+    assert result["verified_facts"][0]["result"] == {"error": "Order not found"}
+    assert "Order not found" in calls[1][-1]["content"]
