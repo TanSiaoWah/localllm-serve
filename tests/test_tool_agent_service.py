@@ -1,3 +1,4 @@
+import logging
 import types
 
 import pytest
@@ -522,3 +523,75 @@ def test_ask_with_tools_tool_not_found(monkeypatch, ticket):
     assert result["verified_facts"][0]["tool"] == "get_order_status"
     assert result["verified_facts"][0]["result"] == {"error": "Order not found"}
     assert "Order not found" in calls[1][-1]["content"]
+
+
+def test_ask_with_tools_logs_tool_request_and_success(monkeypatch, ticket, caplog):
+    """A requested tool name and its successful outcome are logged."""
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs["messages"])
+        if len(calls) == 1:
+            return _tool_call_response(
+                "get_order_status", '{"order_id": "ORD-12345"}'
+            )
+        return _final_response("The order is shipped.")
+
+    monkeypatch.setattr(
+        tool_agent_service.client.chat.completions, "create", fake_create
+    )
+    caplog.set_level(logging.INFO, logger="backend.services.tool_agent_service")
+
+    tool_agent_service.ask_with_tools(ticket, "Where is order ORD-12345?")
+
+    assert "Tool call requested by model: get_order_status" in caplog.text
+    assert "Tool get_order_status completed successfully" in caplog.text
+    # The full result/record must not be logged.
+    assert "Laptop" not in caplog.text
+
+
+def test_ask_with_tools_logs_tool_error(monkeypatch, ticket, caplog):
+    """A tool that returns an error is logged as an error outcome."""
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs["messages"])
+        if len(calls) == 1:
+            return _tool_call_response(
+                "get_order_status", '{"order_id": "ORD-12345"}'
+            )
+        return _final_response("The order could not be verified.")
+
+    monkeypatch.setattr(
+        tool_agent_service.client.chat.completions, "create", fake_create
+    )
+    monkeypatch.setattr(
+        tool_agent_service,
+        "get_order_status",
+        lambda order_id: {"error": "Order service temporarily unavailable"},
+    )
+    caplog.set_level(logging.INFO, logger="backend.services.tool_agent_service")
+
+    tool_agent_service.ask_with_tools(ticket, "Where is order ORD-12345?")
+
+    assert "Tool get_order_status returned an error" in caplog.text
+
+
+def test_ask_with_tools_logs_max_turns(monkeypatch, ticket, caplog):
+    """Reaching the maximum number of turns is logged."""
+    repeat_response = _tool_call_response(
+        "get_order_status", '{"order_id": "ORD-12345"}'
+    )
+
+    def fake_create(**kwargs):
+        return repeat_response
+
+    monkeypatch.setattr(
+        tool_agent_service.client.chat.completions, "create", fake_create
+    )
+    caplog.set_level(logging.INFO, logger="backend.services.tool_agent_service")
+
+    with pytest.raises(ToolAgentMaxTurnsError):
+        tool_agent_service.ask_with_tools(ticket, "Keep checking order ORD-12345.")
+
+    assert "Tool agent reached maximum turns" in caplog.text

@@ -1,10 +1,16 @@
 import json
+import logging
 
 from openai import APIConnectionError, OpenAI
 
 from backend.tools.order_tools import get_order_status
 from backend.tools.payment_tools import get_payment_status
 from backend.tools.schemas import SUPPORT_TOOLS
+
+logger = logging.getLogger(__name__)
+
+# Maximum number of LLM turns the tool agent will take.
+MAX_TURNS = 5
 
 # Connect to the local vLLM server
 client = OpenAI(
@@ -88,8 +94,8 @@ def ask_with_tools(ticket: dict, question: str) -> dict:
         },
     ]
 
-    # Simple agent loop with a maximum of 5 LLM turns
-    for _ in range(5):
+    # Simple agent loop with a maximum of MAX_TURNS LLM turns
+    for _ in range(MAX_TURNS):
         try:
             response = client.chat.completions.create(
                 model=MODEL_NAME,
@@ -121,18 +127,16 @@ def ask_with_tools(ticket: dict, question: str) -> dict:
 
         # Execute each requested tool and append the results
         for tool_call in assistant_message.tool_calls:
-            print(f"Tool requested: {tool_call.function.name}")
-            print(f"Arguments: {tool_call.function.arguments}")
+            tool_name = tool_call.function.name
+            logger.info("Tool call requested by model: %s", tool_name)
 
             # Parse the arguments and execute the requested tool
             try:
                 arguments = json.loads(tool_call.function.arguments)
-                if tool_call.function.name == "get_order_status":
+                if tool_name == "get_order_status":
                     result = get_order_status(arguments["order_id"])
-                    print(f"Tool result: {result}")
-                elif tool_call.function.name == "get_payment_status":
+                elif tool_name == "get_payment_status":
                     result = get_payment_status(arguments["payment_id"])
-                    print(f"Tool result: {result}")
                 else:
                     raise UnknownToolError(
                         "LLM requested an unknown tool"
@@ -141,6 +145,12 @@ def ask_with_tools(ticket: dict, question: str) -> dict:
                 raise InvalidToolCallError(
                     "LLM returned an invalid tool call"
                 ) from exc
+
+            # Log the outcome without logging the full result/record.
+            if isinstance(result, dict) and "error" in result:
+                logger.warning("Tool %s returned an error", tool_name)
+            else:
+                logger.info("Tool %s completed successfully", tool_name)
 
             # Record the verified backend fact
             verified_facts.append(
@@ -160,6 +170,7 @@ def ask_with_tools(ticket: dict, question: str) -> dict:
             )
 
     # If the loop finishes without a plain answer, stop
+    logger.warning("Tool agent reached maximum turns (%d)", MAX_TURNS)
     raise ToolAgentMaxTurnsError(
         "Tool agent exceeded maximum turns"
     )
