@@ -1,8 +1,8 @@
 """Payment status lookup tool, backed by the database.
 
 ``get_payment_status`` keeps its original name, argument, and response shape.
-The ``payments`` dict below is retained only as the fixture source for the seed
-script; lookups now go through the payment repository.
+Data is retrieved through the payment repository; there is no hard-coded data
+in this module.
 """
 
 import logging
@@ -11,15 +11,6 @@ from backend.data import payment_repository
 from backend.data.database import SessionLocal
 
 logger = logging.getLogger(__name__)
-
-# Fixture data for the seed script (not used for lookups in this module).
-payments = {
-    "PAY-88888": {
-        "status": "captured",
-        "amount": 1299.00,
-        "currency": "MYR",
-    },
-}
 
 
 def get_payment_status(payment_id: str):

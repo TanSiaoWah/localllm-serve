@@ -84,25 +84,29 @@ def test_ticket_seed_rows_preserve_exact_demo_values():
 
 
 def test_payment_seed_rows_match_fixture():
-    """Payment row matches the PAY-88888 fixture."""
+    """Payment row matches the exact PAY-88888 fixture values."""
     rows = seed.payment_seed_rows()
-    assert len(rows) == 1
-    assert rows[0]["payment_id"] == "PAY-88888"
-    assert rows[0]["status"] == "captured"
-    assert rows[0]["currency"] == "MYR"
-    assert float(rows[0]["amount"]) == 1299.00
+    assert rows == [
+        {
+            "payment_id": "PAY-88888",
+            "status": "captured",
+            "amount": 1299.00,
+            "currency": "MYR",
+        }
+    ]
 
 
 def test_order_seed_rows_match_fixture():
-    """Order row matches the ORD-12345 fixture."""
+    """Order row matches the exact ORD-12345 fixture values."""
     rows = seed.order_seed_rows()
-    assert len(rows) == 1
-    assert rows[0] == {
-        "order_id": "ORD-12345",
-        "product": "Laptop",
-        "status": "shipped",
-        "payment_id": "PAY-88888",
-    }
+    assert rows == [
+        {
+            "order_id": "ORD-12345",
+            "product": "Laptop",
+            "status": "shipped",
+            "payment_id": "PAY-88888",
+        }
+    ]
 
 
 def test_seed_inserts_all_records_once(memory_session):

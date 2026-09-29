@@ -3,8 +3,8 @@
 Copies the application's current demo data into the remote database:
 
 - ``support.tickets``  <- the explicit seed-ticket fixtures below
-- ``support.payments`` <- the existing payment fixture (PAY-88888)
-- ``support.orders``   <- the existing order fixture (ORD-12345)
+- ``support.payments`` <- the explicit seed-payment fixture below
+- ``support.orders``   <- the explicit seed-order fixture below
 
 The seed is idempotent: a record is only inserted when its primary key is
 not already present, so running this script multiple times never creates
@@ -20,8 +20,6 @@ from sqlalchemy.orm import Session
 
 from backend.data.database import SessionLocal
 from backend.data.db_models import Order, Payment, Ticket
-from backend.tools.order_tools import orders as TOOL_ORDERS
-from backend.tools.payment_tools import payments as TOOL_PAYMENTS
 
 # Demo ticket fixtures. These mirror the records previously held in the
 # in-memory ticket list so the seeded database matches the application data.
@@ -59,16 +57,31 @@ def ticket_seed_rows():
     return [dict(ticket) for ticket in SEED_TICKETS]
 
 
+# Demo payment fixture (PAY-88888).
+SEED_PAYMENT = {
+    "payment_id": "PAY-88888",
+    "status": "captured",
+    "amount": 1299.00,
+    "currency": "MYR",
+}
+
+# Demo order fixture (ORD-12345).
+SEED_ORDER = {
+    "order_id": "ORD-12345",
+    "product": "Laptop",
+    "status": "shipped",
+    "payment_id": "PAY-88888",
+}
+
+
 def payment_seed_rows():
     """Return the payment fixture row (PAY-88888)."""
-    fixture = TOOL_PAYMENTS["PAY-88888"]
-    return [{"payment_id": "PAY-88888", **fixture}]
+    return [dict(SEED_PAYMENT)]
 
 
 def order_seed_rows():
     """Return the order fixture row (ORD-12345)."""
-    fixture = TOOL_ORDERS["ORD-12345"]
-    return [{"order_id": "ORD-12345", **fixture}]
+    return [dict(SEED_ORDER)]
 
 
 def _insert_missing(session, model, rows):
