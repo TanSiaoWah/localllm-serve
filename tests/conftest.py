@@ -1,10 +1,13 @@
 import pytest
+from decimal import Decimal
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from backend.data.db_models import Ticket
+from backend.data.db_models import Base, Order, Payment, Ticket
 import backend.services.ticket_service as ticket_service
+import backend.tools.order_tools as order_tools
+import backend.tools.payment_tools as payment_tools
 
 
 @pytest.fixture
@@ -85,10 +88,32 @@ def db_storage():
         )
 
     factory = sessionmaker(bind=engine)
+    # Create the order/payment tables (tickets already exists above).
+    # Order/Payment reference each other, so create_all resolves the FK order.
+    Base.metadata.create_all(engine, tables=[Payment.__table__, Order.__table__])
+
     session = factory()
     try:
         for row in DEMO_TICKETS:
             session.add(Ticket(**row))
+        # Demo payment + order so DB-backed tools and the tool agent work.
+        session.add(
+            Payment(
+                payment_id="PAY-88888",
+                status="captured",
+                amount=Decimal("1299.00"),
+                currency="MYR",
+            )
+        )
+        session.flush()
+        session.add(
+            Order(
+                order_id="ORD-12345",
+                product="Laptop",
+                status="shipped",
+                payment_id="PAY-88888",
+            )
+        )
         session.commit()
     finally:
         session.close()
@@ -98,12 +123,14 @@ def db_storage():
 
 
 @pytest.fixture(autouse=True)
-def _isolate_ticket_service(db_storage):
-    """Point the ticket service at the isolated DB for every test.
+def _isolate_backends(db_storage):
+    """Point every DB-backed module at the isolated DB for each test.
 
-    Without this, the service (now using SQLAlchemy) would open sessions
-    against the real Supabase DATABASE_URL, which tests must not depend on
-    and must not mutate.
+    Without this, the ticket service and the order/payment tools (now using
+    SQLAlchemy) would open sessions against the real Supabase DATABASE_URL,
+    which tests must not depend on and must not mutate.
     """
     ticket_service.SessionLocal = db_storage
+    order_tools.SessionLocal = db_storage
+    payment_tools.SessionLocal = db_storage
     yield

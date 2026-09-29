@@ -49,7 +49,12 @@ SYSTEM_PROMPT = (
     "- get_payment_status accepts payment IDs.\n"
     "- Never pass an order ID to get_payment_status.\n"
     "- If asked about payment for an order and only an order ID is known, first call get_order_status.\n"
-    "- Use the returned payment_id to call get_payment_status."
+    "- Use the returned payment_id to call get_payment_status.\n"
+    "- In your final answer, state business facts ONLY when they are present in the ticket or in the exact tool results you received.\n"
+    "- Do NOT invent email notifications, refund policies, fulfillment consequences, processing timelines, support actions, account status, or any other business facts that are not in the ticket or tool results.\n"
+    "- Do not recommend or state that no further action is required unless that recommendation is explicitly supported by the ticket data or actual tool results.\n"
+    "- When answering with current business data, report the exact tool result rather than assumptions or general model knowledge.\n"
+    "- If you describe a likely consequence or interpretation based on verified facts, clearly mark it as an interpretation or possibility, not as a verified business fact."
 )
 
 
