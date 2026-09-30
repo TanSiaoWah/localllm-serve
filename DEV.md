@@ -8,8 +8,9 @@ This guide records the working setup for hosting a local model with **vLLM insid
 Windows
 │
 ├── VS Code
-│   └── Python client
-│       └── OpenAI Python SDK
+│    └── LocalLLM-Serve
+│       └── FastAPI backend
+│           └── OpenAI Python SDK
 │
 │       HTTP request
 │       http://localhost:8000/v1
@@ -17,7 +18,7 @@ Windows
 └── WSL2
     └── Ubuntu 24.04
         └── vLLM
-            └── Qwen/Qwen3-0.6B
+            └── Qwen/Qwen3-8B-AWQ
                 └── NVIDIA RTX 4070
 ```
 
@@ -263,11 +264,14 @@ source .venv/bin/activate
 Start the model:
 
 ```bash
-vllm serve Qwen/Qwen3-0.6B \
+vllm serve Qwen/Qwen3-8B-AWQ \
     --host 0.0.0.0 \
     --port 8000 \
     --gpu-memory-utilization 0.8 \
-    --max-model-len 4096
+    --max-model-len 4096 \
+    --enable-auto-tool-choice \
+    --tool-call-parser hermes \
+    --reasoning-parser qwen3
 ```
 
 Keep this terminal open while using the model.
@@ -298,7 +302,7 @@ A working response should include:
 
 ```json
 {
-  "id": "Qwen/Qwen3-0.6B"
+  "id": "Qwen/Qwen3-8B-AWQ"
 }
 ```
 
@@ -306,41 +310,41 @@ At this point the model is successfully hosted by vLLM.
 
 ---
 
-# 11. Create the Windows VS Code Python Client
+# 11. Verify the Windows Python Environment
 
-Example project folder:
+The LocalLLM-Serve project uses a Windows Python virtual environment for the
+FastAPI backend and direct vLLM test scripts.
 
-```text
-D:\Github_Website\vllm-client
-```
+D:\Github_Website\localllm-serve\.venv
+    -> contains the application dependencies
+    -> runs the FastAPI application
+    -> can also run direct vLLM test scripts
 
-From CMD:
+Create the environment from the project root if it does not already exist:
 
-```cmd
-cd /d D:\Github_Website\vllm-client
-```
-
-Create a Windows Python virtual environment:
-
-```cmd
+cd /d D:\Github_Website\localllm-serve
 python -m venv .venv
-```
 
-## Important
+Activate it:
 
-There are now **two separate virtual environments**:
+.venv\Scripts\activate.bat
 
-```text
-WSL:
+The terminal should show:
+
+(.venv) D:\Github_Website\localllm-serve>
+
+There are two separate Python environments in this setup:
+
+WSL2:
 ~/vllm-test/.venv
     -> contains vLLM and PyTorch
-    -> runs the model server
+    -> runs the vLLM server
 
 Windows:
-D:\Github_Website\vllm-client\.venv
-    -> contains the Python client packages
-    -> calls the vLLM server
-```
+D:\Github_Website\localllm-serve\.venv
+    -> runs the FastAPI application
+    -> contains the application dependencies
+    -> can run direct vLLM test scripts
 
 Do not confuse these two environments.
 
@@ -365,7 +369,7 @@ Then open a new terminal.
 You should see something similar to:
 
 ```text
-D:\Github_Website\vllm-client>
+D:\Github_Website\localllm-serve>
 ```
 
 Activate the environment:
@@ -377,13 +381,13 @@ Activate the environment:
 The prompt should become:
 
 ```text
-(.venv) D:\Github_Website\vllm-client>
+(.venv) D:\Github_Website\localllm-serve>
 ```
 
 If VS Code is opened somewhere else first:
 
 ```cmd
-cd /d D:\Github_Website\vllm-client
+cd /d D:\Github_Website\localllm-serve
 .venv\Scripts\activate.bat
 ```
 
@@ -406,7 +410,7 @@ Python: Select Interpreter
 Choose:
 
 ```text
-D:\Github_Website\vllm-client\.venv\Scripts\python.exe
+D:\Github_Website\localllm-serve\.venv\Scripts\python.exe
 ```
 
 This tells VS Code to use the project's virtual environment.
@@ -429,12 +433,12 @@ pip show openai
 
 ---
 
-# 15. Create `test_vllm.py`
+# 15. Run `scripts\test_vllm.py`
 
-Create:
+The repository includes:
 
 ```text
-test_vllm.py
+scripts\test_vllm.py
 ```
 
 with:
@@ -448,7 +452,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="Qwen/Qwen3-0.6B",
+    model="Qwen/Qwen3-8B-AWQ",
     messages=[
         {
             "role": "user",
@@ -464,7 +468,7 @@ print(response.choices[0].message.content)
 Run it:
 
 ```cmd
-python test_vllm.py
+python scripts\test_vllm.py
 ```
 
 If everything is working, the answer is generated locally by:
@@ -478,7 +482,7 @@ localhost:8000
     ↓
 vLLM inside WSL2
     ↓
-Qwen3-0.6B
+Qwen3-8B-AWQ
     ↓
 RTX 4070
 ```
@@ -518,7 +522,7 @@ while True:
     )
 
     response = client.chat.completions.create(
-        model="Qwen/Qwen3-0.6B",
+        model="Qwen/Qwen3-8B-AWQ",
         messages=messages,
         max_tokens=300,
     )
@@ -572,9 +576,9 @@ Leave this terminal running.
 ## Terminal 2 — VS Code CMD: Run the Client
 
 ```cmd
-cd /d D:\Github_Website\vllm-client
+cd /d D:\Github_Website\localllm-serve
 .venv\Scripts\activate.bat
-python test_vllm.py
+python scripts\test_vllm.py
 ```
 
 ---
@@ -610,7 +614,7 @@ where python
 When `.venv` is activated, the first result should be:
 
 ```text
-D:\Github_Website\vllm-client\.venv\Scripts\python.exe
+D:\Github_Website\localllm-serve\.venv\Scripts\python.exe
 ```
 
 ## Check installed OpenAI SDK
@@ -700,7 +704,7 @@ vLLM:
 0.27.1
 
 Model:
-Qwen/Qwen3-0.6B
+Qwen/Qwen3-8B-AWQ
 
 vLLM endpoint:
 http://localhost:8000
@@ -708,6 +712,9 @@ http://localhost:8000
 OpenAI-compatible endpoint:
 http://localhost:8000/v1
 
-Windows client:
-VS Code + Python + OpenAI Python SDK
+Windows project:
+D:\Github_Website\localllm-serve
+
+Windows application:
+VS Code + Python + FastAPI + OpenAI Python SDK
 ```
