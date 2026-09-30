@@ -10,9 +10,10 @@ library (urllib for HTTP, time for timing, statistics for the summary), so
 it adds no dependencies and it measures the model server alone.
 
 What it does:
-    - sends 10 chat-completion requests, one at a time (no concurrency)
-    - measures the elapsed time of each request
-    - prints the count, min, average, median and max latency
+    - sequential section: sends 10 chat-completion requests one at a time
+      (no concurrency) and prints count, min, average, median, max latency
+    - concurrency section: sends 2 requests at the same time and prints the
+      total elapsed time and whether both requests succeeded
 
 Requirements:
     - vLLM must already be running on http://localhost:8000
@@ -26,6 +27,7 @@ This is a manual script. It is intentionally NOT part of the pytest suite
 because it depends on the real Qwen3/vLLM service.
 """
 
+import concurrent.futures
 import json
 import statistics
 import time
@@ -40,6 +42,9 @@ MODEL_NAME = "Qwen/Qwen3-8B-AWQ"
 
 # Sequential requests, one at a time.
 NUM_REQUESTS = 10
+
+# Requests sent at the same time in the concurrency section.
+CONCURRENCY = 2
 
 # A small fixed output length keeps every request a comparable workload.
 MAX_TOKENS = 64
@@ -85,6 +90,42 @@ def print_summary(latencies: list) -> None:
     print(f"max latency:     {max(latencies):.3f} s")
 
 
+def run_concurrent_benchmark(concurrency: int) -> None:
+    """Send `concurrency` requests at the same time and print the result."""
+    print()
+    print("-" * 60)
+    print("concurrency benchmark (requests sent at the same time)")
+    print(f"concurrency level: {concurrency}")
+
+    # ThreadPoolExecutor runs the same send_chat_request() function in
+    # `concurrency` worker threads, so the requests are in flight at the same
+    # time. The timer starts before the first submit and stops after the last
+    # result, so it measures the wall-clock time until ALL requests are done.
+    successes = 0
+    start = time.perf_counter()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = [
+            executor.submit(send_chat_request, PROMPT)
+            for _ in range(concurrency)
+        ]
+        for number, future in enumerate(futures, start=1):
+            try:
+                latency = future.result()
+            except urllib.error.HTTPError as exc:
+                print(f"concurrent request {number}/{concurrency}: HTTP {exc.code}")
+                continue
+            except (urllib.error.URLError, OSError) as exc:
+                print(f"concurrent request {number}/{concurrency}: failed ({exc})")
+                continue
+            successes += 1
+            print(f"concurrent request {number}/{concurrency}: {latency:.3f} s")
+    total_elapsed = time.perf_counter() - start
+
+    print(f"total elapsed time: {total_elapsed:.3f} s")
+    print(f"successful requests: {successes}/{concurrency}")
+    print(f"both requests succeeded: {successes == concurrency}")
+
+
 def main() -> int:
     print("vLLM direct chat-completion benchmark")
     print(f"endpoint: {CHAT_COMPLETIONS_URL}")
@@ -109,6 +150,7 @@ def main() -> int:
         print(f"request {index}/{NUM_REQUESTS}: {elapsed:.3f} s")
 
     print_summary(latencies)
+    run_concurrent_benchmark(CONCURRENCY)
     return 0
 
 
