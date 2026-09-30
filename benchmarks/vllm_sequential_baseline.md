@@ -69,6 +69,34 @@ This suggests that the local vLLM server handled these two concurrent requests e
 
 This result alone does not establish the exact internal scheduling mechanism used by vLLM.
 
+
+## 3. Four-Request Concurrency
+
+### Results
+
+| Metric | Result |
+|---|---:|
+| Total elapsed time | 3.369 s |
+| Successful requests | 4 / 4 |
+
+Individual request latencies:
+
+| Request | Latency |
+|---|---:|
+| 1 | 3.365 s |
+| 2 | 3.346 s |
+| 3 | 3.364 s |
+| 4 | 3.364 s |
+
+### Interpretation
+
+Four concurrent requests completed in approximately **3.37 seconds total**,
+which is only slightly slower than the two-request concurrent result of
+**3.07 seconds**. This indicates that the local vLLM server handled the
+additional concurrent load efficiently rather than processing all requests
+strictly one after another.
+
+
 ---
 
 ## Notes
