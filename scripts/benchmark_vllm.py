@@ -44,7 +44,7 @@ MODEL_NAME = "Qwen/Qwen3-8B-AWQ"
 NUM_REQUESTS = 10
 
 # Requests sent at the same time in the concurrency section.
-CONCURRENCY = 4
+CONCURRENCY = 8
 
 # A small fixed output length keeps every request a comparable workload.
 MAX_TOKENS = 64
