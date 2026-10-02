@@ -1,14 +1,5 @@
-import Link from "next/link";
-
 import CreateTicketForm from "./components/CreateTicketForm";
-
-type Ticket = {
-  id: number;
-  customer_name: string;
-  subject: string;
-  message: string;
-  status: string;
-};
+import TicketDashboard, { type Ticket } from "./components/TicketDashboard";
 
 export default async function Home() {
   let backendConnected = false;
@@ -38,47 +29,66 @@ export default async function Home() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-6 px-4">
-      <h1 className="text-3xl font-bold tracking-tight">
-        LocalLLM Support Copilot
-      </h1>
-      <p className="max-w-md text-center text-lg text-zinc-600 dark:text-zinc-400">
-        AI-assisted customer support powered by a locally hosted LLM.
-      </p>
-      <div className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
-        Backend connection: {backendConnected ? "connected" : "unavailable"}
+    <main className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+      {/* Header */}
+      <header className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-600 text-sm font-semibold text-white">
+              LC
+            </div>
+            <div>
+              <p className="text-sm font-semibold leading-tight">
+                LocalLLM Support Copilot
+              </p>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                AI-assisted customer support workspace
+              </p>
+            </div>
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+            <span
+              aria-hidden="true"
+              className={`h-2 w-2 rounded-full ${
+                backendConnected ? "bg-emerald-500" : "bg-red-500"
+              }`}
+            />
+            {backendConnected ? "Backend connected" : "Backend unavailable"}
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto flex max-w-5xl flex-col gap-8 px-6 py-8">
+        {/* Page heading */}
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Support Dashboard
+          </h1>
+          <p className="mt-1 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
+            Review incoming support tickets and use the AI copilot to investigate
+            orders, payments, and prepare responses — backed by the locally
+            hosted LLM.
+          </p>
+        </div>
+
+        <TicketDashboard tickets={tickets}>
+
+          {/* Create ticket (secondary) */}
+          <aside className="lg:col-span-1">
+            <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+              <h2 className="text-sm font-semibold tracking-tight">
+                New ticket
+              </h2>
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                Add a ticket to demo the copilot against real backend data.
+              </p>
+              <div className="mt-4">
+                <CreateTicketForm />
+              </div>
+            </div>
+          </aside>
+        </TicketDashboard>
       </div>
-
-      <h2 className="text-xl font-semibold">Create ticket</h2>
-      <CreateTicketForm />
-
-      <h2 className="text-xl font-semibold">Tickets</h2>
-      {tickets.length === 0 ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          No tickets found.
-        </p>
-      ) : (
-        <ul className="flex w-full max-w-md flex-col gap-2">
-          {tickets.map((ticket) => (
-            <li
-              key={ticket.id}
-              className="rounded-md border border-zinc-200 px-4 py-3 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900"
-            >
-              <Link href={`/tickets/${ticket.id}`} className="block">
-                <div className="font-medium">
-                  #{ticket.id} — {ticket.subject}
-                </div>
-                <div className="text-sm text-zinc-600 dark:text-zinc-400">
-                  {ticket.customer_name}
-                </div>
-                <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  {ticket.status}
-                </div>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
     </main>
   );
 }
