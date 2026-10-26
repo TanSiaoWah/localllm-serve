@@ -20,6 +20,10 @@ TEST_QUESTIONS = [
     "Does the company offer a 50% discount on all laptops?",
 ]
 
+# --- SentenceTransformer model (initialized once) ---
+from sentence_transformers import SentenceTransformer
+embed_model = SentenceTransformer(EMBED_MODEL_NAME)
+
 # --- Chunking logic (reused from test_retrieval.py approach) ---
 
 
@@ -52,25 +56,14 @@ def split_into_chunks(text: str, max_chars: int, overlap: int):
             start = end - overlap
             if start <= 0:
                 start = end
-def _embed_texts(texts):
-    from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer(EMBED_MODEL_NAME)
-    return model.encode(texts, convert_to_tensor=True)
-def _cosine_similarity(a, b):
-    import numpy as np
-    a = np.asarray(a, dtype=float)
-    b = np.asarray(b, dtype=float)
-    num = np.dot(a, b)
-    den = np.linalg.norm(a) * np.linalg.norm(b)
-    if den == 0:
-        return 0.0
-    return float(num / den)
-def _retrieve_chunks(question, top_k=3):
+
+
+# --- Document setup: read, chunk, and embed all policy files once ---
+def _setup_document_embeddings():
     all_chunks = []
     if not KB_DIR.is_dir():
         print(f"Knowledge base directory not found: {KB_DIR}")
-        return []
-
+        return all_chunks, []
     md_files = sorted(KB_DIR.glob("*.md"))
     for md_path in md_files:
         text = md_path.read_text(encoding="utf-8")
@@ -81,18 +74,43 @@ def _retrieve_chunks(question, top_k=3):
                     "index": idx,
                     "text": chunk_text.strip(),
                 })
-
     if not all_chunks:
-        print("No chunks produced from policy documents.")
+        return [], []
+    chunk_texts = [c["text"] for c in all_chunks]
+    chunk_embeds = embed_model.encode(chunk_texts, convert_to_tensor=False)
+    chunk_embeds_list = []
+    for e in chunk_embeds:
+        if hasattr(e, "tolist"):
+            chunk_embeds_list.append(e.tolist())
+        elif hasattr(e, "__iter__") and not isinstance(e, str):
+            chunk_embeds_list.append(list(e))
+        else:
+            chunk_embeds_list.append(e)
+    return all_chunks, chunk_embeds_list
+
+ALL_CHUNKS, CHUNK_EMBEDS = _setup_document_embeddings()
+
+def _cosine_similarity(a, b):
+    import numpy as np
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    num = np.dot(a, b)
+    den = np.linalg.norm(a) * np.linalg.norm(b)
+    if den == 0:
+        return 0.0
+    return float(num / den)
+def _retrieve_chunks(question, top_k=3):
+    if not ALL_CHUNKS or CHUNK_EMBEDS is None:
+        print("Document embeddings not pre-computed. Run setup first.")
         return []
 
-    chunk_texts = [c["text"] for c in all_chunks]
-    chunk_embeds = _embed_texts(chunk_texts)
-    q_embed = _embed_texts([question])[0]
+    # Embed only the incoming question (fast; uses already-initialized model)
+    q_embed = embed_model.encode([question], convert_to_tensor=False)[0]
 
-    scores = [float(_cosine_similarity(q_embed, c_embed)) for c_embed in chunk_embeds]
+    # Compute cosine similarity against cached document embeddings
+    scores = [_cosine_similarity(q_embed, c_embed) for c_embed in CHUNK_EMBEDS]
     top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
-    return [all_chunks[i] for i in top_indices]
+    return [ALL_CHUNKS[i] for i in top_indices]
 def _build_prompt(question, retrieved_chunks):
     lines = [
         "You are a customer-support copilot. Answer the customer's question "
