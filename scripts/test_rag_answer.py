@@ -28,34 +28,53 @@ embed_model = SentenceTransformer(EMBED_MODEL_NAME)
 
 
 def split_into_chunks(text: str, max_chars: int, overlap: int):
-    """Yield (chunk_index, chunk_text) tuples from *text*.
+    """Yield bounded chunks, preferring sentence/line breaks and target overlap."""
+    import re
 
-    Reuses the same sliding-window approach from inspect_chunks.py:
-    always advances, never infinite loops.
-    """
+    if max_chars <= 0 or overlap < 0:
+        raise ValueError("max_chars must be positive and overlap must be non-negative")
     if not text:
         return
 
+    boundaries = [m.end() for m in re.finditer(r"[.!?](?=\s|$)|\n+", text)]
     start = 0
     chunk_index = 0
     text_len = len(text)
+    previous_end = 0
 
     while start < text_len:
-        end = start + max_chars
-        if end > text_len:
-            end = text_len
+        while start < text_len and text[start].isspace():
+            start += 1
+        if start >= text_len:
+            break
+
+        limit = min(start + max_chars, text_len)
+        end = limit
+        if limit < text_len:
+            # Require new source text, rather than emitting only overlap again.
+            candidates = [b for b in boundaries if max(start, previous_end) < b <= limit]
+            if candidates:
+                end = candidates[-1]
+            else:
+                # With no sentence/line break, split at whitespace if possible.
+                spaces = [
+                    i for i in range(max(start, previous_end) + 1, limit + 1)
+                    if text[i].isspace()
+                ]
+                if spaces:
+                    end = spaces[-1]
 
         chunk_text = text[start:end].strip()
         yield chunk_index, chunk_text
-
         chunk_index += 1
+        previous_end = end
 
         if end >= text_len:
-            start = text_len
-        else:
-            start = end - overlap
-            if start <= 0:
-                start = end
+            break
+
+        # Align overlap to a boundary; never move backwards or skip source text.
+        candidates = [b for b in boundaries if start < b < end] if overlap else []
+        start = min(candidates, key=lambda b: (abs(b - (end - overlap)), -b)) if candidates else end
 
 
 # --- Document setup: read, chunk, and embed all policy files once ---
