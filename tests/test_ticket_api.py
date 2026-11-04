@@ -1,7 +1,11 @@
+import logging
+
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.main import app
 import backend.services.tool_agent_service as tool_agent_service
+from backend.services.rag_service import PolicyRetrievalError
 from backend.services.tool_agent_service import (
     InvalidToolCallError,
     ToolAgentMaxTurnsError,
@@ -10,10 +14,39 @@ from backend.services.tool_agent_service import (
 )
 
 
+class FakeRetriever:
+    def __init__(self, results=(), error=None):
+        self.results = results
+        self.error = error
+        self.calls = []
+
+    def retrieve(self, question, top_k):
+        self.calls.append((question, top_k))
+        if self.error is not None:
+            raise self.error
+        return self.results
+
+
+@pytest.fixture(autouse=True)
+def reset_policy_retriever(monkeypatch):
+    monkeypatch.setattr(app.state, "policy_retriever", None, raising=False)
+
+
+@pytest.fixture(params=["unavailable", "available", "failure"])
+def agent_error_retriever(request, monkeypatch):
+    retriever = None
+    if request.param == "available":
+        retriever = FakeRetriever([({"filename": "policy.md", "index": 0, "text": "Policy."}, 0.9)])
+    elif request.param == "failure":
+        retriever = FakeRetriever(error=PolicyRetrievalError("simulated retrieval failure"))
+    monkeypatch.setattr(app.state, "policy_retriever", retriever)
+    return retriever
+
+
 def test_ask_ticket_with_mocked_agent(monkeypatch):
     """POST /tickets/1/ask returns the mocked agent's answer and facts."""
 
-    def fake_ask_with_tools(ticket, question):
+    def fake_ask_with_tools(ticket, question, policy_context=""):
         return {
             "answer": "The order is shipped.",
             "verified_facts": [
@@ -43,10 +76,10 @@ def test_ask_ticket_with_mocked_agent(monkeypatch):
     assert body["verified_facts"][0]["tool"] == "get_order_status"
 
 
-def test_ask_ticket_agent_unavailable(monkeypatch):
+def test_ask_ticket_agent_unavailable(monkeypatch, agent_error_retriever):
     """POST /tickets/1/ask returns 503 when the LLM service is unavailable."""
 
-    def fake_ask_with_tools(ticket, question):
+    def fake_ask_with_tools(ticket, question, policy_context=""):
         raise ToolAgentUnavailableError("Local vLLM server is unavailable")
 
     monkeypatch.setattr(tool_agent_service, "ask_with_tools", fake_ask_with_tools)
@@ -61,10 +94,10 @@ def test_ask_ticket_agent_unavailable(monkeypatch):
     assert response.json() == {"detail": "Local LLM service is unavailable"}
 
 
-def test_ask_ticket_invalid_tool_call(monkeypatch):
+def test_ask_ticket_invalid_tool_call(monkeypatch, agent_error_retriever):
     """POST /tickets/1/ask returns 502 when the LLM returns an invalid tool call."""
 
-    def fake_ask_with_tools(ticket, question):
+    def fake_ask_with_tools(ticket, question, policy_context=""):
         raise InvalidToolCallError("LLM returned an invalid tool call")
 
     monkeypatch.setattr(tool_agent_service, "ask_with_tools", fake_ask_with_tools)
@@ -79,10 +112,10 @@ def test_ask_ticket_invalid_tool_call(monkeypatch):
     assert response.json() == {"detail": "LLM returned an invalid tool call"}
 
 
-def test_ask_ticket_unknown_tool(monkeypatch):
+def test_ask_ticket_unknown_tool(monkeypatch, agent_error_retriever):
     """POST /tickets/1/ask returns 502 when the LLM requests an unsupported tool."""
 
-    def fake_ask_with_tools(ticket, question):
+    def fake_ask_with_tools(ticket, question, policy_context=""):
         raise UnknownToolError("LLM requested an unknown tool")
 
     monkeypatch.setattr(tool_agent_service, "ask_with_tools", fake_ask_with_tools)
@@ -97,10 +130,10 @@ def test_ask_ticket_unknown_tool(monkeypatch):
     assert response.json() == {"detail": "LLM requested an unsupported tool"}
 
 
-def test_ask_ticket_max_turns(monkeypatch):
+def test_ask_ticket_max_turns(monkeypatch, agent_error_retriever):
     """POST /tickets/1/ask returns 502 when the tool agent exceeds its turn limit."""
 
-    def fake_ask_with_tools(ticket, question):
+    def fake_ask_with_tools(ticket, question, policy_context=""):
         raise ToolAgentMaxTurnsError("Tool agent exceeded maximum turns")
 
     monkeypatch.setattr(tool_agent_service, "ask_with_tools", fake_ask_with_tools)
@@ -113,3 +146,81 @@ def test_ask_ticket_max_turns(monkeypatch):
 
     assert response.status_code == 502
     assert response.json() == {"detail": "LLM tool agent exceeded maximum turns"}
+
+
+def test_ask_ticket_forwards_ordered_policy_context_and_preserves_facts(monkeypatch):
+    chunks = [
+        ({"filename": "return_policy.md", "index": 3, "text": "  First passage.\n"}, 0.8),
+        ({"filename": "shipping_policy.md", "index": 1, "text": "Second passage.\n- Condition."}, 0.9),
+        ({"filename": "return_policy.md", "index": 0, "text": "Third passage."}, 0.7),
+    ]
+    retriever = FakeRetriever(chunks)
+    monkeypatch.setattr(app.state, "policy_retriever", retriever)
+    calls = []
+    facts = [{"tool": "get_order_status", "result": {"status": "shipped"}}]
+
+    def fake_agent(ticket, question, policy_context=""):
+        calls.append((ticket, question, policy_context))
+        return {"answer": "Supported answer.", "verified_facts": facts}
+
+    monkeypatch.setattr(tool_agent_service, "ask_with_tools", fake_agent)
+    question = "  Can I return my laptop after 21 days?  "
+    client = TestClient(app)
+    for _ in range(2):
+        response = client.post("/tickets/1/ask", json={"question": question})
+        assert response.status_code == 200
+        assert response.json() == {
+            "ticket_id": 1, "answer": "Supported answer.", "verified_facts": facts
+        }
+    assert retriever.calls == [(question, 3), (question, 3)]
+    expected_context = (
+        "[Source: return_policy.md (chunk 3)]\n  First passage.\n\n\n"
+        "[Source: shipping_policy.md (chunk 1)]\nSecond passage.\n- Condition.\n\n"
+        "[Source: return_policy.md (chunk 0)]\nThird passage."
+    )
+    assert len(calls) == 2
+    for ticket, forwarded_question, context in calls:
+        assert ticket["id"] == 1
+        assert forwarded_question == question
+        assert context == expected_context
+
+
+@pytest.mark.parametrize("rag_mode", ["missing", "none", "empty", "failure"])
+def test_ask_ticket_empty_context_fallback(monkeypatch, caplog, rag_mode):
+    question = "Private customer question"
+    private_evidence = "Private policy evidence"
+    if rag_mode == "missing":
+        monkeypatch.delattr(app.state, "policy_retriever")
+    elif rag_mode in {"empty", "failure"}:
+        error = PolicyRetrievalError(f"{question}: {private_evidence}") if rag_mode == "failure" else None
+        monkeypatch.setattr(app.state, "policy_retriever", FakeRetriever(error=error))
+    contexts = []
+
+    def fake_agent(ticket, question, policy_context=""):
+        contexts.append(policy_context)
+        return {"answer": "Existing answer.", "verified_facts": []}
+
+    monkeypatch.setattr(tool_agent_service, "ask_with_tools", fake_agent)
+    caplog.set_level(logging.WARNING, logger="backend.api.tickets")
+    response = TestClient(app).post("/tickets/1/ask", json={"question": question})
+    assert response.status_code == 200
+    assert response.json() == {"ticket_id": 1, "answer": "Existing answer.", "verified_facts": []}
+    assert contexts == [""]
+    if rag_mode == "failure":
+        assert "Policy retrieval failed" in caplog.text
+    assert question not in caplog.text
+    assert private_evidence not in caplog.text
+
+
+def test_missing_ticket_does_not_retrieve_or_call_agent(monkeypatch):
+    retriever = FakeRetriever()
+    monkeypatch.setattr(app.state, "policy_retriever", retriever)
+
+    def unexpected_agent(*args, **kwargs):
+        raise AssertionError("Agent called for a missing ticket")
+
+    monkeypatch.setattr(tool_agent_service, "ask_with_tools", unexpected_agent)
+    response = TestClient(app).post("/tickets/99999/ask", json={"question": "Help me."})
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Ticket not found"}
+    assert retriever.calls == []

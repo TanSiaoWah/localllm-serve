@@ -69,7 +69,7 @@ def test_rag_failure_logs_and_preserves_routes(monkeypatch, caplog, failure_stag
             raise RuntimeError("simulated model loading failure")
         return FakeRetriever()
 
-    def fake_agent(ticket, question):
+    def fake_agent(ticket, question, policy_context=""):
         return {"answer": "Existing agent still works.", "verified_facts": []}
 
     monkeypatch.setattr(main, "create_policy_retriever", factory)
