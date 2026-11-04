@@ -599,6 +599,61 @@ def test_ask_with_tools_order_service_unavailable(monkeypatch, ticket):
     assert "temporarily unavailable" in calls[1][-1]["content"]
 
 
+def test_order_not_found_preserves_policy_and_grounding_instructions(monkeypatch):
+    """Check the post-error LLM input, not whether a real model obeys it."""
+    ticket = {
+        "subject": "Laptop return",
+        "message": "My laptop was delivered 21 days ago.",
+    }
+    context = (
+        "[Source: return_policy.md (chunk 0)]\n"
+        "Returns are accepted within 30 days of delivery, subject to eligibility conditions."
+    )
+    calls = []
+    executed_orders = []
+
+    def order_tool(order_id):
+        executed_orders.append(order_id)
+        return {"error": "Order not found"}
+
+    def fake_create(**kwargs):
+        calls.append([dict(message) for message in kwargs["messages"]])
+        if len(calls) == 1:
+            return _tool_call_response("get_order_status", '{"order_id": "ORD-99999"}')
+        return _final_response("Order not found; return eligibility remains unconfirmed.")
+
+    monkeypatch.setattr(tool_agent_service, "get_order_status", order_tool)
+    monkeypatch.setattr(tool_agent_service.client.chat.completions, "create", fake_create)
+    result = tool_agent_service.ask_with_tools(
+        ticket, "Can I return my laptop for order ORD-99999?", policy_context=context
+    )
+
+    assert executed_orders == ["ORD-99999"]
+    assert len(calls) == 2
+    messages = calls[1]
+    instructions = messages[0]["content"]
+    for rule in (
+        "Customer-reported ticket information is unverified",
+        "Retrieved policy evidence describes general business rules",
+        "Backend tool results are verified lookup outcomes, including errors",
+        "an error does not verify the customer's reported facts",
+        "When using a customer-reported delivery date, attribute it",
+        "or use conditional wording",
+        "A successful order lookup alone does not verify delivery date, product condition, packaging, or complete return eligibility",
+        "If an order lookup fails, explain that the order could not be verified",
+        "do not confirm return eligibility or a verified return-window status",
+    ):
+        assert rule in instructions
+    assert ticket["message"] in messages[1]["content"]
+    assert context in messages[1]["content"]
+    assert "not verified order/payment data" in messages[1]["content"]
+    assert messages[-1]["role"] == "tool"
+    assert json.loads(messages[-1]["content"]) == {"error": "Order not found"}
+    assert result["verified_facts"] == [
+        {"tool": "get_order_status", "result": {"error": "Order not found"}}
+    ]
+
+
 def test_ask_with_tools_tool_not_found(monkeypatch, ticket):
     """A tool "not found" error is reported to the model, not invented."""
 
