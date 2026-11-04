@@ -1,0 +1,52 @@
+{
+  "cases": [
+    {
+      "id": "return_21_days",
+      "expected_source": "return_policy.md",
+      "question": "Can I return my laptop after 21 days?",
+      "expected_facts": [
+        "the return window is 30 days from delivery",
+        "the laptop must meet the return eligibility conditions"
+      ],
+      "category": "policy_accuracy"
+    },
+    {
+      "id": "shipping_no_updates",
+      "expected_source": "shipping_policy.md",
+      "question": "My package has had no tracking updates for 8 business days. What should I do?",
+      "expected_facts": [
+        "contact customer support for an investigation when there are no tracking updates for 7 or more business days"
+      ],
+      "category": "policy_accuracy"
+    },
+    {
+      "id": "shipping_lost_package",
+      "expected_source": "shipping_policy.md",
+      "question": "My package is lost 14 business days after the estimated delivery date. Can I get a refund?",
+      "expected_facts": [
+        "a reshipment or full refund may be requested after 14 business days from the estimated delivery date",
+        "verification is required"
+      ],
+      "category": "policy_accuracy"
+    },
+    {
+      "id": "login_reset_failed",
+      "expected_source": "troubleshooting_guide.md",
+      "question": "I tried resetting my password twice, but I still cannot log in. What should I do?",
+      "expected_facts": [
+        "escalate to support when password reset still fails after two attempts"
+      ],
+      "category": "troubleshooting"
+    },
+    {
+      "id": "unsupported_discount",
+      "expected_source": null,
+      "question": "Does the company offer a 50% discount on all laptops?",
+      "expected_facts": [
+        "the provided policy documents do not establish whether this discount exists",
+        "do not invent a discount policy"
+      ],
+      "category": "unsupported_claim"
+    }
+  ]
+}
