@@ -11,7 +11,7 @@ class PolicyRetrievalError(Exception):
 
 
 def split_into_chunks(text: str, max_chars: int, overlap: int):
-    """Yield bounded chunks, preferring sentence/line breaks and target overlap."""
+    """Yield bounded chunks, preserving short Markdown FAQs and target overlap."""
     import re
 
     if max_chars <= 0 or overlap < 0:
@@ -19,7 +19,31 @@ def split_into_chunks(text: str, max_chars: int, overlap: int):
     if not text:
         return
 
+    # A section starts at a heading, standalone bold label, or bold label
+    # ending in a colon. A question section includes its entire following answer.
+    sections = []
+    for match in re.finditer(
+        r"(?m)^[ \t]*(?:#{1,6}[ \t]+(?P<heading>[^\n]+)|"
+        r"\*\*(?P<bold>[^*\n]+)\*\*(?P<tail>[^\n]*))", text
+    ):
+        heading, bold, tail = match.group("heading", "bold", "tail")
+        if heading is not None or not tail.strip() or bold.rstrip().endswith(":"):
+            title = heading.rstrip("# \t\r") if heading is not None else bold.strip()
+            position = match.start() + len(match.group()) - len(match.group().lstrip())
+            sections.append((position, match.end(), title.endswith("?")))
+
+    protected = []
+    for index, (position, question_end, is_question) in enumerate(sections):
+        end = sections[index + 1][0] if index + 1 < len(sections) else len(text)
+        end = position + len(text[position:end].rstrip())
+        if is_question and text[question_end:end].strip() and end - position <= max_chars:
+            protected.append((position, end))
+
     boundaries = [m.end() for m in re.finditer(r"[.!?](?=\s|$)|\n+", text)]
+    boundaries = sorted(
+        {b for b in boundaries if not any(left < b < right for left, right in protected)}
+        | {b for span in protected for b in span}
+    )
     start = 0
     chunk_index = 0
     text_len = len(text)
@@ -47,6 +71,16 @@ def split_into_chunks(text: str, max_chars: int, overlap: int):
                 if spaces:
                     end = spaces[-1]
 
+        # Whitespace/hard-split fallback must also respect protected FAQs.
+        interrupted = next((span for span in protected if span[0] < end < span[1]), None)
+        if interrupted is not None:
+            faq_start, _ = interrupted
+            if faq_start <= previous_end:
+                # Overlap left too little room: start afresh at the FAQ.
+                start = faq_start
+                continue
+            end = faq_start
+
         chunk_text = text[start:end].strip()
         yield chunk_index, chunk_text
         chunk_index += 1
@@ -54,6 +88,15 @@ def split_into_chunks(text: str, max_chars: int, overlap: int):
 
         if end >= text_len:
             break
+
+        # A new protected FAQ must not inherit preceding policy text via overlap.
+        faq_start = next(
+            (left for left, _ in protected if left >= end and not text[end:left].strip()),
+            None,
+        )
+        if faq_start is not None:
+            start = faq_start
+            continue
 
         # Align overlap to a boundary; never move backwards or skip source text.
         candidates = [b for b in boundaries if start < b < end] if overlap else []

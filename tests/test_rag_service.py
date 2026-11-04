@@ -68,6 +68,89 @@ def test_unbroken_word_and_empty_text():
     assert list(split_into_chunks(" \n\t" * 500, 500, 100)) == []
 
 
+@pytest.mark.parametrize("question", ["**Can I return this item?**", "### Can I return this item?"])
+@pytest.mark.parametrize("next_section", [
+    "", "\n\n## Another policy\nOther rules apply.",
+    "\n\n**Refund Method:** Use the original payment method.",
+    "\n\n**Can I exchange this item?**\nContact support for exchanges.",
+], ids=["document-end", "heading", "bold-label", "next-faq"])
+def test_short_markdown_faq_stays_complete(question, next_section):
+    prefix = "Intro " + "context " * 40 + "ends here.\n\n"
+    answer = (
+        "Yes. You may return this item within 30 days of delivery if every condition is met.\n\n"
+        "Keep the original packaging and provide proof of purchase.\n"
+        "- Include all accessories.\n- Keep the item in like-new condition."
+    )
+    faq = question + "\n" + answer
+    assert len(faq) <= 500 < len(prefix + faq)
+    text = prefix + faq + next_section
+    chunks = list(split_into_chunks(text, 500, 100))
+    assert any(faq in chunk for _, chunk in chunks)
+    assert [index for index, _ in chunks] == list(range(len(chunks)))
+    faq_start, faq_end = len(prefix), len(prefix + faq)
+    covered = set()
+    previous_start = -1
+    previous_end = 0
+    for _, chunk in chunks:
+        assert chunk and len(chunk) <= 500
+        start = text.find(chunk, previous_start + 1)
+        assert start >= 0
+        end = start + len(chunk)
+        assert end > previous_end
+        if start < faq_end and end > faq_start:
+            assert start <= faq_start and end >= faq_end, "Partial protected FAQ"
+        covered.update(range(start, end))
+        previous_start, previous_end = start, end
+    assert all(index in covered for index, char in enumerate(text) if not char.isspace())
+
+
+def test_faq_discards_overlap_when_needed():
+    prefix = "P" * 100 + ". " + "Q" * 95 + ".\n\n"
+    faq = "**Can I use this service?**\nYes. " + "A" * 440 + "."
+    assert len(faq) <= 500
+    chunks = list(split_into_chunks(prefix + faq, 500, 100))
+    assert chunks == [(0, prefix.strip()), (1, faq)]
+
+
+def test_protected_faq_does_not_receive_preceding_overlap():
+    first_rule = "First policy: " + "A" * 280 + "."
+    preceding_rule = "Unrelated category: " + "B" * 80 + "."
+    prefix = first_rule + "\n" + preceding_rule + "\n\n"
+    question = "**Can I use this service?**"
+    faq = question + "\nYes. " + "Follow the applicable conditions. " * 4
+    faq = faq.rstrip()
+    text = prefix + faq
+    # This overlap fits, so size-based FAQ protection alone does not remove it.
+    assert len(preceding_rule + "\n\n" + faq) <= 500 < len(text)
+
+    chunks = list(split_into_chunks(text, 500, 100))
+
+    assert chunks == [(0, prefix.strip()), (1, faq)]
+    assert chunks[1][1].startswith(question)
+    assert first_rule in chunks[0][1] and preceding_rule in chunks[0][1]
+    assert preceding_rule not in chunks[1][1]
+    assert all(chunk and len(chunk) <= 500 for _, chunk in chunks)
+    assert [index for index, _ in chunks] == list(range(len(chunks)))
+    assert "".join(text.split()) == "".join("".join(chunk for _, chunk in chunks).split())
+
+
+def test_oversized_faq_uses_existing_fallback():
+    # No boundary after this question fits the first window, so the original
+    # algorithm emits the question separately, then hard-splits its long answer.
+    question = "**Can I use this service?**"
+    answer = "x" * 1201
+    chunks = list(split_into_chunks(question + "\n" + answer, 500, 100))
+    assert chunks == [(0, question), (1, "x" * 500), (2, "x" * 500), (3, "x" * 201)]
+
+
+def test_non_faq_chunk_boundaries_remain_unchanged():
+    text = "First sentence. Second sentence. Third sentence."
+    assert list(split_into_chunks(text, 32, 10)) == [
+        (0, "First sentence. Second sentence."),
+        (1, "Second sentence. Third sentence."),
+    ]
+
+
 def test_metadata_ranking_top_k_and_cached_documents(tmp_path):
     # Filenames are deliberately created out of order; vector magnitude must
     # not outweigh direction when using cosine similarity.
