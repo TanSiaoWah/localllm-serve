@@ -4,9 +4,19 @@ import re
 
 from openai import APIConnectionError, OpenAI
 
+from backend.tools.kapruka_tools import (
+    KaprukaMCPError,
+    KaprukaValidationError,
+    search_kapruka_products,
+)
 from backend.tools.order_tools import get_order_status
 from backend.tools.payment_tools import get_payment_status
-from backend.tools.schemas import ORDER_STATUS_TOOL, PAYMENT_STATUS_TOOL, SUPPORT_TOOLS
+from backend.tools.schemas import (
+    KAPRUKA_SEARCH_PRODUCTS_TOOL,
+    ORDER_STATUS_TOOL,
+    PAYMENT_STATUS_TOOL,
+    SUPPORT_TOOLS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +97,7 @@ SYSTEM_PROMPT = (
     "- Do NOT invent email notifications, refund policies, fulfillment consequences, processing timelines, support actions, account status, or any other business facts beyond the supplied evidence.\n"
     "- Do not recommend or state that no further action is required unless that recommendation is explicitly supported by the ticket data or actual tool results.\n"
     "- When answering with current business data, report the exact tool result rather than assumptions or general model knowledge.\n"
+    "- For Kapruka product prices, use the exact currency code returned by the tool (for example, LKR 168,200). Never substitute a currency symbol, such as the Indian rupee symbol, for that code. Do not convert currencies unless the conversion is explicitly supported by tool results.\n"
     "- If a tool returns an error result, do not invent the requested business information and do not claim the operation succeeded; clearly tell the customer that the requested information could not be verified.\n"
     "- If an order lookup fails, explain that the order could not be verified and do not confirm return eligibility or a verified return-window status. You may explain the general policy and conditionally discuss the reported delivery date, but eligibility remains unconfirmed.\n"
     "- If the tool error is a \"not found\" error, explain that the requested record could not be found.\n"
@@ -100,6 +111,7 @@ def _build_tools_for_request(
     customer_order_ids: list[str],
     customer_payment_ids: list[str],
     payment_intent: bool,
+    question: str = "",
 ) -> list[dict]:
     """Construct the tool list the model is allowed to see for this request.
 
@@ -109,8 +121,9 @@ def _build_tools_for_request(
        expose [ORDER_STATUS_TOOL]
     3. Customer provides a payment ID:
        expose [PAYMENT_STATUS_TOOL]
-    4. No relevant order/payment ID:
-       expose no business tools, even if payment_intent is True.
+    4. Otherwise, expose Kapruka search only for an explicit catalog request
+       in the current question; ticket and retrieved policy text cannot enable it.
+    5. Without either condition, expose no tools.
     """
     if customer_order_ids and payment_intent:
         return [ORDER_STATUS_TOOL, PAYMENT_STATUS_TOOL]
@@ -118,6 +131,28 @@ def _build_tools_for_request(
         return [ORDER_STATUS_TOOL]
     if customer_payment_ids:
         return [PAYMENT_STATUS_TOOL]
+
+    # Conservative English intent gate: require the brand, a discovery action,
+    # and product/catalog wording or an explicit search target on Kapruka.
+    brand = re.search(r"\bkapruka\b", question, re.IGNORECASE)
+    discovery = re.search(r"\b(search|find|browse|show|list)\b", question, re.IGNORECASE)
+    product_scope = re.search(
+        r"\b(products?|items?|catalog(?:ue)?)\b"
+        r"|\b(?:search|browse)\s+kapruka\s+for\s+\S+"
+        r"|\b(?:find|show|list|browse|search\s+for)\s+.+\s+(?:on|from|at)\s+kapruka\b",
+        question,
+        re.IGNORECASE,
+    )
+    excluded = re.search(
+        r"\b(orders?|payments?|charges?|transactions?|paid|track|tracking|create|"
+        r"place|buy|purchase|checkout|returns?|refunds?|polic(?:y|ies)|"
+        r"contact|support|login|account|website)\b"
+        r"|\b(?:not|never|don't)\b",
+        question,
+        re.IGNORECASE,
+    )
+    if brand and discovery and product_scope and not excluded:
+        return [KAPRUKA_SEARCH_PRODUCTS_TOOL]
     return []
 
 
@@ -134,8 +169,9 @@ def ask_with_tools(ticket: dict, question: str, policy_context: str = "") -> dic
 
     # Determine which tools are exposed to Qwen for this specific request.
     tools_for_request = _build_tools_for_request(
-        customer_order_ids, customer_payment_ids, payment_intent
+        customer_order_ids, customer_payment_ids, payment_intent, question
     )
+    allowed_tool_names = {tool["function"]["name"] for tool in tools_for_request}
 
     # Build the user message with the ticket context and the agent question
     user_content = (
@@ -196,6 +232,14 @@ def ask_with_tools(ticket: dict, question: str, policy_context: str = "") -> dic
                 "verified_facts": verified_facts,
             }
 
+        # Authorize the entire batch before parsing arguments or executing tools.
+        for tool_call in assistant_message.tool_calls:
+            tool_name = tool_call.function.name
+            if tool_name not in allowed_tool_names or tool_name in {
+                "kapruka_create_order", "kapruka_track_order"
+            }:
+                raise UnknownToolError("LLM requested an unsupported tool")
+
         # Keep the assistant message with its tool calls in the conversation
         messages.append(
             {
@@ -212,8 +256,12 @@ def ask_with_tools(ticket: dict, question: str, policy_context: str = "") -> dic
             # Parse the arguments and execute the requested tool
             try:
                 arguments = json.loads(tool_call.function.arguments)
+                if not isinstance(arguments, dict):
+                    raise InvalidToolCallError("LLM returned an invalid tool call")
                 if tool_name == "get_order_status":
                     order_id = arguments["order_id"]
+                    if not isinstance(order_id, str):
+                        raise InvalidToolCallError("LLM returned an invalid tool call")
                     # Reject an ID the customer never provided; never substitute.
                     if customer_order_ids and order_id not in customer_order_ids:
                         mismatch_key = (tool_name, order_id)
@@ -233,6 +281,8 @@ def ask_with_tools(ticket: dict, question: str, policy_context: str = "") -> dic
                         result = get_order_status(order_id)
                 elif tool_name == "get_payment_status":
                     payment_id = arguments["payment_id"]
+                    if not isinstance(payment_id, str):
+                        raise InvalidToolCallError("LLM returned an invalid tool call")
                     if customer_payment_ids and payment_id not in customer_payment_ids:
                         mismatch_key = (tool_name, payment_id)
                         if mismatch_key in rejected_mismatch_calls:
@@ -249,6 +299,26 @@ def ask_with_tools(ticket: dict, question: str, policy_context: str = "") -> dic
                         result = {"error": PAYMENT_ID_MISMATCH_ERROR}
                     else:
                         result = get_payment_status(payment_id)
+                elif tool_name == "kapruka_search_products":
+                    if set(arguments) - {"query", "limit", "currency"}:
+                        raise InvalidToolCallError("LLM returned an invalid tool call")
+                    query = arguments["query"]
+                    try:
+                        # The adapter validates values before any MCP connection.
+                        result = search_kapruka_products(
+                            query,
+                            arguments.get("limit", 3),
+                            arguments.get("currency", "LKR"),
+                        )
+                    except KaprukaValidationError:
+                        result = {"error": "Invalid Kapruka product search arguments."}
+                    except KaprukaMCPError:
+                        result = {"error": "Kapruka product service temporarily unavailable."}
+                    result = {
+                        **result,
+                        "source": "kapruka",
+                        "data_type": "product_catalog",
+                    }
                 else:
                     raise UnknownToolError(
                         "LLM requested an unknown tool"

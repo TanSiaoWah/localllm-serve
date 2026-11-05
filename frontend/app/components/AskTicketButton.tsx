@@ -40,7 +40,81 @@ const FIELD_LABELS: Record<string, string> = {
 const TOOL_TITLES: Record<string, string> = {
   get_order_status: "Order",
   get_payment_status: "Payment",
+  kapruka_search_products: "Kapruka products",
 };
+
+function isKaprukaCatalog(result: Record<string, unknown>): boolean {
+  return result.source === "kapruka" &&
+    result.data_type === "product_catalog" && Array.isArray(result.results);
+}
+
+function productRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function productText(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+}
+
+function productLink(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password
+      ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function KaprukaProducts({ products }: { products: unknown[] }) {
+  return (
+    <div className="mt-2 min-w-0 text-sm [overflow-wrap:anywhere]">
+      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+        External Kapruka catalog — separate from demo-company orders and policies.
+      </p>
+      {products.length === 0 ? (
+        <p className="mt-2 text-zinc-600 dark:text-zinc-400">No products found.</p>
+      ) : (
+        <ul className="mt-3 flex min-w-0 flex-col gap-3">
+          {products.map((value, index) => {
+            const product = productRecord(value);
+            const price = productRecord(product.price);
+            const amount = productText(price.amount ?? product.price ?? product.amount);
+            const currency = productText(price.currency ?? product.currency);
+            const stock = product.stock_status ?? product.in_stock ?? product.availability ?? product.stock;
+            const stockText = typeof stock === "boolean"
+              ? (stock ? "In stock" : "Out of stock")
+              : productText(stock);
+            const url = productLink(product.url ?? product.product_url);
+
+            return (
+              <li key={index} className="min-w-0 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
+                <p className="font-medium text-zinc-900 dark:text-zinc-100">
+                  {productText(product.name) || productText(product.product_name) || productText(product.title) || "Unnamed product"}
+                </p>
+                <p className="mt-1 text-zinc-700 dark:text-zinc-300">
+                  Price: {amount || "Unavailable"}{currency ? ` ${currency}` : " (currency unavailable)"}
+                </p>
+                <p className="mt-1 text-zinc-600 dark:text-zinc-400">
+                  Stock: {stockText || "Unknown"}
+                </p>
+                {url && (
+                  <a href={url} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-violet-700 underline underline-offset-2 dark:text-violet-300">
+                    View product
+                  </a>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function fieldLabel(key: string): string {
   return FIELD_LABELS[key] ?? key.replace(/_/g, " ");
@@ -98,6 +172,7 @@ export default function AskTicketButton({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const hasLookupFailures = verifiedFacts.some((fact) => toolErrorMessage(fact.result));
+  const rawFacts = verifiedFacts.filter((fact) => !isKaprukaCatalog(fact.result));
 
   async function handleAsk() {
     setError("");
@@ -136,7 +211,7 @@ export default function AskTicketButton({
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex min-w-0 max-w-full flex-col gap-5">
       <button
         type="button"
         onClick={handleAsk}
@@ -183,7 +258,7 @@ export default function AskTicketButton({
           </section>
 
           {verifiedFacts.length > 0 && (
-            <section className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-950/40">
+            <section className="min-w-0 max-w-full rounded-lg border border-zinc-200 bg-zinc-50 p-4 [overflow-wrap:anywhere] dark:border-zinc-800 dark:bg-zinc-950/40">
               <div className="flex items-center gap-2">
                 <span className={`flex h-5 w-5 items-center justify-center rounded text-[10px] font-semibold ${hasLookupFailures ? "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"}`}>
                   {hasLookupFailures ? "!" : "✓"}
@@ -201,13 +276,14 @@ export default function AskTicketButton({
               <div className="mt-3 flex flex-col gap-3">
                 {verifiedFacts.map((fact, index) => {
                   const lookupError = toolErrorMessage(fact.result);
-                  const rows = lookupError ? [] : factRows(fact.result);
+                  const catalog = isKaprukaCatalog(fact.result);
+                  const rows = lookupError || catalog ? [] : factRows(fact.result);
                   return (
                     <div
                       key={`${fact.tool}-${index}`}
                       className={`rounded-lg border p-3 ${lookupError ? "border-amber-200 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10" : "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"}`}
                     >
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                         <h4 className="text-sm font-semibold tracking-tight">
                           {TOOL_TITLES[fact.tool] ?? fact.tool}
                         </h4>
@@ -220,6 +296,9 @@ export default function AskTicketButton({
                           <span className="font-semibold">Lookup failed: </span>
                           {lookupError}
                         </p>
+                      )}
+                      {!lookupError && catalog && (
+                        <KaprukaProducts products={fact.result.results as unknown[]} />
                       )}
                       {rows.length > 0 && (
                         <dl className="mt-2 flex flex-col gap-1">
@@ -243,14 +322,14 @@ export default function AskTicketButton({
                 })}
               </div>
 
-              <details className="mt-3">
+              {rawFacts.length > 0 && <details className="mt-3 min-w-0 max-w-full">
                 <summary className="cursor-pointer text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200">
                   Raw tool output
                 </summary>
                 <pre className="mt-2 overflow-x-auto rounded-md bg-zinc-100 p-3 text-[11px] leading-relaxed text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                  {JSON.stringify(verifiedFacts, null, 2)}
+                  {JSON.stringify(rawFacts, null, 2)}
                 </pre>
-              </details>
+              </details>}
             </section>
           )}
         </>

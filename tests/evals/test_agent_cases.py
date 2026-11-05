@@ -131,11 +131,12 @@ CASES = [
         "scenario": "invalid_order_id",
         "question": "Check order PAY-88888",
         "llm_turns": [[("get_order_status", {"order_id": "PAY-88888"})]],
-        "final_answer": "That order ID is not valid.",
+        "final_answer": None,  # Authorization rejects the call before a final turn.
         "expected": {
-            "tools": ["get_order_status"],
-            "args": [{"order_id": "PAY-88888"}],
-            "results": [{"error": "Invalid order ID"}],
+            "error": tool_agent_service.UnknownToolError,
+            "tools": [],
+            "args": [],
+            "results": [],
         },
         "force_order_db_error": False,
     },
@@ -219,9 +220,16 @@ def test_agent_case(case, ticket, monkeypatch):
         tool_agent_service.client.chat.completions, "create", _build_llm(case)
     )
 
-    result = tool_agent_service.ask_with_tools(ticket, case["question"])
-
     expected = case["expected"]
+    if "error" in expected:
+        # A PAY- identifier exposes only the payment tool. Reject an order
+        # call before execution; identifier-format checks remain tool unit tests.
+        with pytest.raises(expected["error"], match="unsupported tool"):
+            tool_agent_service.ask_with_tools(ticket, case["question"])
+        assert recorded_calls == []
+        return
+
+    result = tool_agent_service.ask_with_tools(ticket, case["question"])
 
     # Whether a tool was called, which tools, their arguments, and their order.
     assert [call["tool"] for call in recorded_calls] == expected["tools"]

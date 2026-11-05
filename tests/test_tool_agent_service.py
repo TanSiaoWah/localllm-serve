@@ -1,11 +1,14 @@
 import json
 import logging
 import types
+from unittest.mock import Mock
 
 import pytest
 from openai import APIConnectionError
 
 import backend.services.tool_agent_service as tool_agent_service
+import backend.tools.kapruka_tools as kapruka_tools
+from backend.tools.schemas import KAPRUKA_SEARCH_PRODUCTS_TOOL
 from backend.services.tool_agent_service import (
     InvalidToolCallError,
     ToolAgentMaxTurnsError,
@@ -435,7 +438,7 @@ def test_ask_with_tools_missing_required_argument(monkeypatch, ticket):
     with pytest.raises(InvalidToolCallError):
         tool_agent_service.ask_with_tools(
             ticket,
-            "Where is my order?",
+            "Where is order ORD-12345?",
         )
 
 
@@ -555,7 +558,7 @@ def test_ask_with_tools_payment_service_unavailable(monkeypatch, ticket):
         lambda payment_id: {"error": "Payment service temporarily unavailable"},
     )
 
-    result = tool_agent_service.ask_with_tools(ticket, "What is my payment status?")
+    result = tool_agent_service.ask_with_tools(ticket, "What is the status of PAY-88888?")
 
     assert result["verified_facts"][0]["tool"] == "get_payment_status"
     assert result["verified_facts"][0]["result"] == {
@@ -905,8 +908,8 @@ def test_identifier_validation_mismatched_payment_id_rejected(monkeypatch, ticke
     assert "captured" not in calls[1][-1]["content"]
 
 
-def test_identifier_validation_skipped_without_customer_id(monkeypatch, ticket):
-    """With no ORD-/PAY- identifier in the question, validation is not applied."""
+def test_unexposed_order_rejected_without_customer_id(monkeypatch, ticket):
+    """Without a customer identifier the order tool is not authorized."""
     executed = []
     real_get_order_status = tool_agent_service.get_order_status
 
@@ -926,13 +929,10 @@ def test_identifier_validation_skipped_without_customer_id(monkeypatch, ticket):
         lambda **kwargs: responses.pop(0),
     )
 
-    result = tool_agent_service.ask_with_tools(
-        ticket,
-        "Where is my order?",
-    )
+    with pytest.raises(UnknownToolError):
+        tool_agent_service.ask_with_tools(ticket, "Where is my order?")
 
-    assert executed == ["ORD-12345"]
-    assert result["verified_facts"][0]["result"]["status"] == "shipped"
+    assert executed == []
 
 
 def test_identifier_validation_preserves_order_then_payment_flow(
@@ -1328,3 +1328,376 @@ def test_dynamic_tools_general_login_question_exposes_no_tools(monkeypatch, tick
     assert recorded_kwargs[0].get("tool_choice") is None
     assert result["verified_facts"] == []
     assert result["answer"] == "You can try resetting your password."
+
+
+@pytest.mark.parametrize("question,tool_name", [
+    ("Find laptops.", "kapruka_search_products"),
+    ("Where is ORD-12345?", "get_payment_status"),
+    ("Check payment PAY-88888.", "get_order_status"),
+    ("Help me log in.", "get_order_status"),
+    ("Help me log in.", "get_payment_status"),
+    ("Find laptops.", "kapruka_create_order"),
+    ("Find laptops.", "kapruka_track_order"),
+])
+def test_unexposed_tools_rejected_before_argument_parsing(
+    monkeypatch, ticket, question, tool_name
+):
+    # Invalid JSON must never be parsed for an unauthorized tool.
+    response = _tool_call_response(tool_name, "not JSON")
+    monkeypatch.setattr(
+        tool_agent_service.client.chat.completions, "create", Mock(return_value=response)
+    )
+    executors = [Mock(), Mock(), Mock()]
+    for name, executor in zip(
+        ("get_order_status", "get_payment_status", "search_kapruka_products"), executors
+    ):
+        monkeypatch.setattr(tool_agent_service, name, executor)
+    with pytest.raises(UnknownToolError):
+        tool_agent_service.ask_with_tools(ticket, question)
+    for executor in executors:
+        executor.assert_not_called()
+
+
+@pytest.mark.parametrize("tool_name", ["kapruka_create_order", "kapruka_track_order"])
+def test_forbidden_kapruka_tools_rejected_even_if_exposed(monkeypatch, ticket, tool_name):
+    monkeypatch.setattr(
+        tool_agent_service, "_build_tools_for_request",
+        lambda *args: [{"type": "function", "function": {"name": tool_name}}],
+    )
+    monkeypatch.setattr(
+        tool_agent_service.client.chat.completions, "create",
+        Mock(return_value=_tool_call_response(tool_name, "{}")),
+    )
+    search = Mock()
+    monkeypatch.setattr(tool_agent_service, "search_kapruka_products", search)
+    with pytest.raises(UnknownToolError):
+        tool_agent_service.ask_with_tools(ticket, "Find laptops.")
+    search.assert_not_called()
+
+
+def test_unauthorized_batch_rejected_before_any_execution(monkeypatch, ticket):
+    response = _tool_call_response("get_order_status", '{"order_id": "ORD-12345"}')
+    response.choices[0].message.tool_calls.extend(
+        _tool_call_response("get_payment_status", '{"payment_id": "PAY-88888"}')
+        .choices[0].message.tool_calls
+    )
+    monkeypatch.setattr(
+        tool_agent_service.client.chat.completions, "create", Mock(return_value=response)
+    )
+    order, payment = Mock(), Mock()
+    monkeypatch.setattr(tool_agent_service, "get_order_status", order)
+    monkeypatch.setattr(tool_agent_service, "get_payment_status", payment)
+    with pytest.raises(UnknownToolError):
+        tool_agent_service.ask_with_tools(ticket, "Where is ORD-12345?")
+    order.assert_not_called()
+    payment.assert_not_called()
+
+
+@pytest.fixture
+def kapruka_dispatch(monkeypatch):
+    """Expose Kapruka only inside these tests; never connect to MCP or vLLM."""
+    state = types.SimpleNamespace(
+        responses=[], calls=[],
+        search=Mock(return_value={
+            "source": "kapruka", "data_type": "product_catalog",
+            "results": [{"id": "P1", "name": "Laptop", "price": 100, "currency": "LKR"}],
+        }),
+    )
+    monkeypatch.setattr(
+        tool_agent_service, "_build_tools_for_request",
+        lambda *args: [KAPRUKA_SEARCH_PRODUCTS_TOOL],
+    )
+    monkeypatch.setattr(tool_agent_service, "search_kapruka_products", state.search)
+    state.network = Mock(side_effect=AssertionError("No live MCP requests allowed"))
+    monkeypatch.setattr(kapruka_tools, "_search_kapruka_products", state.network)
+
+    def fake_create(**kwargs):
+        state.calls.append({**kwargs, "messages": list(kwargs["messages"])})
+        return state.responses.pop(0)
+
+    monkeypatch.setattr(tool_agent_service.client.chat.completions, "create", fake_create)
+    return state
+
+
+@pytest.mark.parametrize("arguments,expected", [
+    ({"query": "laptop"}, ("laptop", 3, "LKR")),
+    ({"query": "laptop", "limit": 5, "currency": "USD"}, ("laptop", 5, "USD")),
+])
+def test_authorized_kapruka_dispatch_preserves_labels_and_rag(
+    ticket, kapruka_dispatch, arguments, expected
+):
+    state = kapruka_dispatch
+    state.responses = [
+        _tool_call_response("kapruka_search_products", json.dumps(arguments)),
+        _final_response("Here are external Kapruka products."),
+    ]
+    result = tool_agent_service.ask_with_tools(ticket, "Find laptops.", policy_context="Demo policy.")
+    state.search.assert_called_once_with(*expected)
+    assert result == {
+        "answer": "Here are external Kapruka products.",
+        "verified_facts": [{"tool": "kapruka_search_products", "result": state.search.return_value}],
+    }
+    assert json.loads(state.calls[-1]["messages"][-1]["content"]) == state.search.return_value
+    assert all("Demo policy." in call["messages"][1]["content"] for call in state.calls)
+    state.network.assert_not_called()
+
+
+@pytest.mark.parametrize("policy_context", ["", "Demo company return policy."])
+@pytest.mark.parametrize("currency", ["LKR", "USD"])
+def test_kapruka_currency_instruction_reaches_every_model_turn(
+    ticket, kapruka_dispatch, policy_context, currency
+):
+    """Verify prompt delivery and unchanged tool data, not real-model compliance."""
+    state = kapruka_dispatch
+    state.search.return_value["results"][0].update(price=168200, currency=currency)
+    state.responses = [
+        _tool_call_response(
+            "kapruka_search_products", json.dumps({"query": "laptop", "currency": currency})
+        ),
+        _final_response("Mocked product answer."),
+    ]
+
+    result = tool_agent_service.ask_with_tools(
+        ticket, "Search Kapruka for laptops.", policy_context=policy_context
+    )
+
+    assert len(state.calls) == 2
+    for call in state.calls:
+        system = call["messages"][0]
+        assert system["role"] == "system"
+        assert "use the exact currency code returned by the tool" in system["content"]
+        assert "LKR 168,200" in system["content"]
+        assert "Never substitute a currency symbol, such as the Indian rupee symbol" in system["content"]
+        assert "Do not convert currencies unless the conversion is explicitly supported by tool results" in system["content"]
+    tool_result = json.loads(state.calls[-1]["messages"][-1]["content"])
+    assert tool_result == state.search.return_value
+    assert tool_result["results"][0]["currency"] == currency
+    assert tool_result["results"][0]["price"] == 168200
+    assert result["verified_facts"][0]["result"] == tool_result
+    state.network.assert_not_called()
+
+
+@pytest.mark.parametrize("error_type,message", [
+    (kapruka_tools.KaprukaValidationError, "Invalid Kapruka product search arguments."),
+    (kapruka_tools.KaprukaMCPError, "Kapruka product service temporarily unavailable."),
+])
+def test_kapruka_errors_are_sanitized_and_loop_continues(
+    ticket, kapruka_dispatch, caplog, error_type, message
+):
+    state = kapruka_dispatch
+    state.search.side_effect = error_type("private internal details")
+    state.responses = [
+        _tool_call_response("kapruka_search_products", '{"query": "laptop"}'),
+        _final_response("The lookup could not be completed."),
+    ]
+    result = tool_agent_service.ask_with_tools(ticket, "Find laptops.")
+    assert result["verified_facts"][0]["result"] == {
+        "source": "kapruka", "data_type": "product_catalog", "error": message,
+    }
+    assert "private internal details" not in repr(state.calls) + json.dumps(result) + caplog.text
+
+
+@pytest.mark.parametrize("arguments", [
+    "not JSON", "[]", "null", "{}",
+    '{"query": "laptop", "server_url": "https://example.com"}',
+    '{"params": {"q": "laptop"}}',
+    '{"query": "laptop", "tool_name": "kapruka_create_order"}',
+])
+def test_malformed_kapruka_arguments_rejected_before_adapter(ticket, kapruka_dispatch, arguments):
+    state = kapruka_dispatch
+    state.responses = [_tool_call_response("kapruka_search_products", arguments)]
+    with pytest.raises(InvalidToolCallError):
+        tool_agent_service.ask_with_tools(ticket, "Find laptops.")
+    state.search.assert_not_called()
+    state.network.assert_not_called()
+
+
+@pytest.mark.parametrize("arguments", [
+    {"query": "ab"}, {"query": None}, {"query": "x" * 201},
+    {"query": "laptop", "limit": True}, {"query": "laptop", "limit": 11},
+    {"query": "laptop", "currency": "MYR"},
+])
+def test_adapter_validation_reused_without_network(monkeypatch, ticket, kapruka_dispatch, arguments):
+    state = kapruka_dispatch
+    monkeypatch.setattr(tool_agent_service, "search_kapruka_products", kapruka_tools.search_kapruka_products)
+    state.responses = [
+        _tool_call_response("kapruka_search_products", json.dumps(arguments)),
+        _final_response("Please supply valid search arguments."),
+    ]
+    result = tool_agent_service.ask_with_tools(ticket, "Find laptops.")
+    assert result["verified_facts"][0]["result"]["error"] == "Invalid Kapruka product search arguments."
+    state.network.assert_not_called()
+
+
+def test_kapruka_failure_does_not_break_order_payment_dispatch(monkeypatch, ticket, kapruka_dispatch):
+    state = kapruka_dispatch
+    monkeypatch.setattr(
+        tool_agent_service, "_build_tools_for_request",
+        lambda *args: [KAPRUKA_SEARCH_PRODUCTS_TOOL, tool_agent_service.ORDER_STATUS_TOOL,
+                       tool_agent_service.PAYMENT_STATUS_TOOL],
+    )
+    state.search.side_effect = kapruka_tools.KaprukaMCPError("private failure")
+    order = Mock(return_value={"status": "shipped", "payment_id": "PAY-88888"})
+    payment = Mock(return_value={"status": "captured"})
+    monkeypatch.setattr(tool_agent_service, "get_order_status", order)
+    monkeypatch.setattr(tool_agent_service, "get_payment_status", payment)
+    state.responses = [
+        _tool_call_response("kapruka_search_products", '{"query": "laptop"}'),
+        _tool_call_response("get_order_status", '{"order_id": "ORD-12345"}'),
+        _tool_call_response("get_payment_status", '{"payment_id": "PAY-88888"}'),
+        _final_response("Order shipped; payment captured. Catalog unavailable."),
+    ]
+    result = tool_agent_service.ask_with_tools(
+        ticket, "Find laptops and check payment for ORD-12345.", policy_context="Demo policy."
+    )
+    order.assert_called_once_with("ORD-12345")
+    payment.assert_called_once_with("PAY-88888")
+    assert [fact["tool"] for fact in result["verified_facts"]] == [
+        "kapruka_search_products", "get_order_status", "get_payment_status",
+    ]
+    assert result["verified_facts"][1]["result"] == order.return_value
+    assert result["verified_facts"][2]["result"] == payment.return_value
+    assert len(state.calls) == 4
+    assert all("Demo policy." in call["messages"][1]["content"] for call in state.calls)
+
+
+@pytest.mark.parametrize("orders,payments,intent", [
+    ([], [], False), (["ORD-12345"], [], False),
+    (["ORD-12345"], [], True), ([], ["PAY-88888"], True),
+])
+def test_kapruka_still_absent_from_normal_tool_selection(orders, payments, intent):
+    tools = tool_agent_service._build_tools_for_request(orders, payments, intent)
+    assert all(not tool["function"]["name"].startswith("kapruka_") for tool in tools)
+
+
+@pytest.mark.parametrize("question", [
+    "Search Kapruka products for laptops.",
+    "Browse the Kapruka catalog.",
+    "Please show Kapruka items.",
+    "Find laptops on Kapruka.",
+    "Show laptops from Kapruka.",
+    "List laptops at Kapruka.",
+    "Search Kapruka for laptops.",
+    "Search for laptops on Kapruka.",
+    "Browse Kapruka for cakes.",
+    "SEARCH KAPRUKA PRODUCTS FOR LAPTOPS.",
+])
+def test_explicit_kapruka_search_exposes_only_reviewed_tool(monkeypatch, ticket, question):
+    llm = Mock(return_value=_final_response("Product search is available."))
+    search = Mock(side_effect=AssertionError("No live product searches"))
+    monkeypatch.setattr(tool_agent_service.client.chat.completions, "create", llm)
+    monkeypatch.setattr(tool_agent_service, "search_kapruka_products", search)
+
+    tool_agent_service.ask_with_tools(ticket, question)
+
+    assert llm.call_args.kwargs["tools"] == [KAPRUKA_SEARCH_PRODUCTS_TOOL]
+    assert llm.call_args.kwargs["tool_choice"] == "auto"
+    search.assert_not_called()
+
+
+@pytest.mark.parametrize("question,expected_names", [
+    ("What is the return policy?", []),
+    ("Search Kapruka for the return policy.", []),
+    ("Show Kapruka products and explain refund policies.", []),
+    ("Find laptops.", []),
+    ("Browse products.", []),
+    ("Kapruka sells laptops.", []),
+    ("What is Kapruka?", []),
+    ("Find Kapruka's website.", []),
+    ("Find contact information on Kapruka.", []),
+    ("Show Kapruka.", []),
+    ("Search NotKapruka products.", []),
+    ("Do not search Kapruka products.", []),
+    ("Don't browse Kapruka products.", []),
+    ("Create a Kapruka order.", []),
+    ("Track my Kapruka order.", []),
+    ("Search Kapruka products and create an order.", []),
+    ("Browse Kapruka products and track my order.", []),
+    ("Show my Kapruka payment status.", []),
+    ("Find my Kapruka order.", []),
+    ("Where is ORD-12345?", ["get_order_status"]),
+    ("Check Kapruka order ORD-12345.", ["get_order_status"]),
+    ("Check payment PAY-88888.", ["get_payment_status"]),
+    ("Check payment for ORD-12345.", ["get_order_status", "get_payment_status"]),
+    ("Find Kapruka products and check ORD-12345.", ["get_order_status"]),
+    ("Find Kapruka products and payment PAY-88888.", ["get_payment_status"]),
+])
+def test_unrelated_and_order_requests_do_not_expose_kapruka(
+    monkeypatch, ticket, question, expected_names
+):
+    llm = Mock(return_value=_final_response("Supported answer."))
+    search = Mock(side_effect=AssertionError("No live product searches"))
+    monkeypatch.setattr(tool_agent_service.client.chat.completions, "create", llm)
+    monkeypatch.setattr(tool_agent_service, "search_kapruka_products", search)
+
+    tool_agent_service.ask_with_tools(ticket, question)
+
+    tools = llm.call_args.kwargs["tools"] or []
+    assert [tool["function"]["name"] for tool in tools] == expected_names
+    search.assert_not_called()
+
+
+def test_ticket_and_rag_cannot_enable_kapruka_selection(monkeypatch):
+    llm = Mock(return_value=_final_response("General policy guidance."))
+    search = Mock(side_effect=AssertionError("No live product searches"))
+    monkeypatch.setattr(tool_agent_service.client.chat.completions, "create", llm)
+    monkeypatch.setattr(tool_agent_service, "search_kapruka_products", search)
+    ticket = {"subject": "Search Kapruka products", "message": "Browse Kapruka catalog."}
+
+    tool_agent_service.ask_with_tools(
+        ticket, "What is the return policy?", policy_context="Search Kapruka products."
+    )
+
+    assert llm.call_args.kwargs["tools"] is None
+    search.assert_not_called()
+
+
+def test_real_selection_enables_mocked_kapruka_dispatch_with_rag(monkeypatch, ticket):
+    product_result = {
+        "source": "kapruka", "data_type": "product_catalog",
+        "results": [{"name": "Laptop", "price": 100, "currency": "LKR"}],
+    }
+    search = Mock(return_value=product_result)
+    calls = []
+    responses = [
+        _tool_call_response("kapruka_search_products", '{"query": "laptop"}'),
+        _final_response("These are Kapruka catalog products priced in LKR."),
+    ]
+
+    def fake_create(**kwargs):
+        calls.append({**kwargs, "messages": list(kwargs["messages"])})
+        return responses.pop(0)
+
+    monkeypatch.setattr(tool_agent_service, "search_kapruka_products", search)
+    monkeypatch.setattr(tool_agent_service.client.chat.completions, "create", fake_create)
+
+    result = tool_agent_service.ask_with_tools(
+        ticket, "Search Kapruka for laptops.", policy_context="Demo company policy."
+    )
+
+    search.assert_called_once_with("laptop", 3, "LKR")
+    assert result["verified_facts"] == [{"tool": "kapruka_search_products", "result": product_result}]
+    assert len(calls) == 2
+    assert all(call["tools"] == [KAPRUKA_SEARCH_PRODUCTS_TOOL] for call in calls)
+    assert all("Demo company policy." in call["messages"][1]["content"] for call in calls)
+    assert json.loads(calls[-1]["messages"][-1]["content"]) == product_result
+
+
+@pytest.mark.parametrize("tool_name", [
+    "get_order_status", "get_payment_status", "kapruka_create_order", "kapruka_track_order",
+])
+def test_product_search_does_not_authorize_other_tools(monkeypatch, ticket, tool_name):
+    response = _tool_call_response(tool_name, "{}")
+    monkeypatch.setattr(
+        tool_agent_service.client.chat.completions, "create", Mock(return_value=response)
+    )
+    executors = [Mock(), Mock(), Mock()]
+    for name, executor in zip(
+        ("get_order_status", "get_payment_status", "search_kapruka_products"), executors
+    ):
+        monkeypatch.setattr(tool_agent_service, name, executor)
+
+    with pytest.raises(UnknownToolError):
+        tool_agent_service.ask_with_tools(ticket, "Search Kapruka for laptops.")
+    for executor in executors:
+        executor.assert_not_called()
