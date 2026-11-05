@@ -1,0 +1,13 @@
+# Offline backend test dependencies, pinned from the local .venv (Python 3.11).
+# RAG tests inject fake embeddings; no torch, sentence-transformers, or vLLM.
+fastapi==0.141.1
+httpx==0.28.1
+httpx2==2.13.1
+mcp==2.3.0
+numpy==2.4.6
+openai==3.19.2
+psycopg2-binary==2.9.12
+pydantic==2.13.5
+pytest==9.1.1
+python-dotenv==1.2.3
+SQLAlchemy==2.1.1
