@@ -7,6 +7,7 @@ import backend.services.ticket_service as ticket_service
 import backend.services.ai_service as ai_service
 import backend.services.tool_agent_service as tool_agent_service
 from backend.services.ai_service import AIServiceUnavailableError, InvalidAIResponseError
+from backend.services.agent_trace import AgentTrace
 from backend.services.rag_service import PolicyRetrievalError
 from backend.services.tool_agent_service import (
     InvalidToolCallError,
@@ -71,46 +72,49 @@ def analyze_ticket(ticket_id: int):
 @router.post("/{ticket_id}/ask", response_model=TicketAskResponse)
 def ask_ticket(ticket_id: int, request: TicketQuestion, http_request: Request):
     """Ask the tool-capable agent a question about a ticket."""
-    ticket = ticket_service.get_ticket_by_id(ticket_id)
-    policy_context = ""
-    retriever = getattr(http_request.app.state, "policy_retriever", None)
-    if retriever is not None:
+    with AgentTrace() as trace:
+        ticket = ticket_service.get_ticket_by_id(ticket_id)
+        policy_context = ""
+        retriever = getattr(http_request.app.state, "policy_retriever", None)
+        if retriever is not None:
+            try:
+                with trace.step("retrieval", "policy_retrieval"):
+                    retrieved = retriever.retrieve(request.question, top_k=3)
+                policy_context = "\n\n".join(
+                    f"[Source: {chunk['filename']} (chunk {chunk['index']})]\n{chunk['text']}"
+                    for chunk, _ in retrieved
+                )
+            except PolicyRetrievalError:
+                logger.warning("Policy retrieval failed; continuing without policy context")
         try:
-            retrieved = retriever.retrieve(request.question, top_k=3)
-            policy_context = "\n\n".join(
-                f"[Source: {chunk['filename']} (chunk {chunk['index']})]\n{chunk['text']}"
-                for chunk, _ in retrieved
+            result = tool_agent_service.ask_with_tools(
+                ticket,
+                request.question,
+                policy_context=policy_context,
+                trace=trace,
             )
-        except PolicyRetrievalError:
-            logger.warning("Policy retrieval failed; continuing without policy context")
-    try:
-        result = tool_agent_service.ask_with_tools(
-            ticket,
-            request.question,
-            policy_context=policy_context,
-        )
-    except ToolAgentUnavailableError:
-        raise HTTPException(
-            status_code=503,
-            detail="Local LLM service is unavailable",
-        )
-    except InvalidToolCallError:
-        raise HTTPException(
-            status_code=502,
-            detail="LLM returned an invalid tool call",
-        )
-    except UnknownToolError:
-        raise HTTPException(
-            status_code=502,
-            detail="LLM requested an unsupported tool",
-        )
-    except ToolAgentMaxTurnsError:
-        raise HTTPException(
-            status_code=502,
-            detail="LLM tool agent exceeded maximum turns",
-        )
-    return {
-        "ticket_id": ticket_id,
-        "answer": result["answer"],
-        "verified_facts": result["verified_facts"],
-    }
+        except ToolAgentUnavailableError:
+            raise HTTPException(
+                status_code=503,
+                detail="Local LLM service is unavailable",
+            )
+        except InvalidToolCallError:
+            raise HTTPException(
+                status_code=502,
+                detail="LLM returned an invalid tool call",
+            )
+        except UnknownToolError:
+            raise HTTPException(
+                status_code=502,
+                detail="LLM requested an unsupported tool",
+            )
+        except ToolAgentMaxTurnsError:
+            raise HTTPException(
+                status_code=502,
+                detail="LLM tool agent exceeded maximum turns",
+            )
+        return {
+            "ticket_id": ticket_id,
+            "answer": result["answer"],
+            "verified_facts": result["verified_facts"],
+        }

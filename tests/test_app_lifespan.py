@@ -1,5 +1,6 @@
 import builtins
 import importlib.util
+import json
 import logging
 import sys
 import types
@@ -11,6 +12,95 @@ from fastapi.testclient import TestClient
 
 import backend.main as main
 import backend.services.tool_agent_service as tool_agent_service
+from backend.services import agent_trace
+
+
+@pytest.fixture(autouse=True)
+def isolated_trace_logging(monkeypatch):
+    # Startup config persists for a worker's lifetime; isolate it between tests.
+    monkeypatch.setattr(agent_trace.logger, "handlers", [])
+    monkeypatch.setattr(agent_trace.logger, "level", logging.NOTSET)
+    monkeypatch.setattr(agent_trace.logger, "propagate", True)
+
+
+def test_trace_info_visible_with_root_warning_and_no_root_changes(monkeypatch, capsys):
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "level", logging.WARNING)
+    original_handlers = list(root.handlers)
+    uvicorn_logger = logging.getLogger("uvicorn.error")
+    original_uvicorn = (uvicorn_logger.level, list(uvicorn_logger.handlers))
+    assert not agent_trace.logger.isEnabledFor(logging.INFO)
+
+    agent_trace.configure_trace_logging()
+    with agent_trace.AgentTrace():
+        pass
+
+    captured = capsys.readouterr()
+    records = [json.loads(line) for line in captured.err.splitlines()]
+    assert [r["event"] for r in records] == ["agent_trace_started", "agent_trace_completed"]
+    assert records[0]["trace_id"] == records[1]["trace_id"]
+    assert captured.out == ""
+    assert root.level == logging.WARNING
+    assert root.handlers == original_handlers
+    assert (uvicorn_logger.level, uvicorn_logger.handlers) == original_uvicorn
+
+
+def test_trace_setup_is_idempotent_and_does_not_propagate(monkeypatch, capsys):
+    # A root handler must not receive a second copy, even if it accepts INFO.
+    from unittest.mock import Mock
+
+    ancestor_handler = logging.StreamHandler()
+    ancestor_handler.emit = Mock()
+    monkeypatch.setattr(logging.getLogger(), "handlers", [ancestor_handler])
+    agent_trace.configure_trace_logging()
+    handler = agent_trace.logger.handlers[0]
+    agent_trace.configure_trace_logging()
+    assert agent_trace.logger.handlers == [handler]
+
+    with agent_trace.AgentTrace():
+        pass
+
+    assert len(capsys.readouterr().err.splitlines()) == 2
+    ancestor_handler.emit.assert_not_called()
+
+
+def test_trace_setup_reuses_existing_handler(capsys):
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    agent_trace.logger.addHandler(handler)
+    agent_trace.configure_trace_logging()
+    assert agent_trace.logger.handlers == [handler]
+    with agent_trace.AgentTrace():
+        pass
+    assert len(capsys.readouterr().err.splitlines()) == 2
+
+
+def test_lifespan_enables_json_traces_for_ask(monkeypatch, capsys):
+    from unittest.mock import Mock
+
+    retriever = Mock()
+    retriever.retrieve.return_value = []
+    monkeypatch.setattr(main, "create_policy_retriever", lambda: retriever)
+    message = types.SimpleNamespace(content="Safe answer", tool_calls=None)
+    llm = Mock(return_value=types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)]))
+    monkeypatch.setattr(tool_agent_service.client.chat.completions, "create", llm)
+
+    # Two startup cycles must still produce exactly one copy of each event.
+    for _ in range(2):
+        with TestClient(main.app) as client:
+            result = client.post("/tickets/1/ask", json={"question": "Private customer question"})
+            assert result.status_code == 200
+            assert result.json() == {"ticket_id": 1, "answer": "Safe answer", "verified_facts": []}
+
+    captured = capsys.readouterr()
+    records = [json.loads(line) for line in captured.err.splitlines()]
+    assert [r["event"] for r in records] == [
+        "agent_trace_started", "agent_step_completed", "agent_step_completed", "agent_trace_completed",
+    ] * 2
+    assert len({r["trace_id"] for r in records}) == 2
+    assert "Private customer question" not in captured.err
+    assert "Safe answer" not in captured.err
+    assert len(agent_trace.logger.handlers) == 1
 
 
 def test_cpu_factory_and_initialization_once_per_lifespan(monkeypatch):
@@ -69,7 +159,7 @@ def test_rag_failure_logs_and_preserves_routes(monkeypatch, caplog, failure_stag
             raise RuntimeError("simulated model loading failure")
         return FakeRetriever()
 
-    def fake_agent(ticket, question, policy_context=""):
+    def fake_agent(ticket, question, policy_context="", *, trace=None):
         return {"answer": "Existing agent still works.", "verified_facts": []}
 
     monkeypatch.setattr(main, "create_policy_retriever", factory)

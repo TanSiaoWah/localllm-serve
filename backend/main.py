@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.tickets import router as tickets_router
+from backend.services.agent_trace import configure_trace_logging
 from backend.services.rag_service import PolicyRetriever
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ def create_policy_retriever():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_trace_logging()
     app.state.policy_retriever = None
     try:
         retriever = create_policy_retriever()

@@ -46,7 +46,7 @@ def agent_error_retriever(request, monkeypatch):
 def test_ask_ticket_with_mocked_agent(monkeypatch):
     """POST /tickets/1/ask returns the mocked agent's answer and facts."""
 
-    def fake_ask_with_tools(ticket, question, policy_context=""):
+    def fake_ask_with_tools(ticket, question, policy_context="", *, trace=None):
         return {
             "answer": "The order is shipped.",
             "verified_facts": [
@@ -79,7 +79,7 @@ def test_ask_ticket_with_mocked_agent(monkeypatch):
 def test_ask_ticket_agent_unavailable(monkeypatch, agent_error_retriever):
     """POST /tickets/1/ask returns 503 when the LLM service is unavailable."""
 
-    def fake_ask_with_tools(ticket, question, policy_context=""):
+    def fake_ask_with_tools(ticket, question, policy_context="", *, trace=None):
         raise ToolAgentUnavailableError("Local vLLM server is unavailable")
 
     monkeypatch.setattr(tool_agent_service, "ask_with_tools", fake_ask_with_tools)
@@ -97,7 +97,7 @@ def test_ask_ticket_agent_unavailable(monkeypatch, agent_error_retriever):
 def test_ask_ticket_invalid_tool_call(monkeypatch, agent_error_retriever):
     """POST /tickets/1/ask returns 502 when the LLM returns an invalid tool call."""
 
-    def fake_ask_with_tools(ticket, question, policy_context=""):
+    def fake_ask_with_tools(ticket, question, policy_context="", *, trace=None):
         raise InvalidToolCallError("LLM returned an invalid tool call")
 
     monkeypatch.setattr(tool_agent_service, "ask_with_tools", fake_ask_with_tools)
@@ -115,7 +115,7 @@ def test_ask_ticket_invalid_tool_call(monkeypatch, agent_error_retriever):
 def test_ask_ticket_unknown_tool(monkeypatch, agent_error_retriever):
     """POST /tickets/1/ask returns 502 when the LLM requests an unsupported tool."""
 
-    def fake_ask_with_tools(ticket, question, policy_context=""):
+    def fake_ask_with_tools(ticket, question, policy_context="", *, trace=None):
         raise UnknownToolError("LLM requested an unknown tool")
 
     monkeypatch.setattr(tool_agent_service, "ask_with_tools", fake_ask_with_tools)
@@ -133,7 +133,7 @@ def test_ask_ticket_unknown_tool(monkeypatch, agent_error_retriever):
 def test_ask_ticket_max_turns(monkeypatch, agent_error_retriever):
     """POST /tickets/1/ask returns 502 when the tool agent exceeds its turn limit."""
 
-    def fake_ask_with_tools(ticket, question, policy_context=""):
+    def fake_ask_with_tools(ticket, question, policy_context="", *, trace=None):
         raise ToolAgentMaxTurnsError("Tool agent exceeded maximum turns")
 
     monkeypatch.setattr(tool_agent_service, "ask_with_tools", fake_ask_with_tools)
@@ -159,7 +159,7 @@ def test_ask_ticket_forwards_ordered_policy_context_and_preserves_facts(monkeypa
     calls = []
     facts = [{"tool": "get_order_status", "result": {"status": "shipped"}}]
 
-    def fake_agent(ticket, question, policy_context=""):
+    def fake_agent(ticket, question, policy_context="", *, trace=None):
         calls.append((ticket, question, policy_context))
         return {"answer": "Supported answer.", "verified_facts": facts}
 
@@ -196,7 +196,7 @@ def test_ask_ticket_empty_context_fallback(monkeypatch, caplog, rag_mode):
         monkeypatch.setattr(app.state, "policy_retriever", FakeRetriever(error=error))
     contexts = []
 
-    def fake_agent(ticket, question, policy_context=""):
+    def fake_agent(ticket, question, policy_context="", *, trace=None):
         contexts.append(policy_context)
         return {"answer": "Existing answer.", "verified_facts": []}
 

@@ -43,8 +43,9 @@ def test_order_tool_logs_success(db_storage, caplog):
 
     get_order_status("ORD-12345")
 
-    assert "Order tool invoked: order_id=ORD-12345" in caplog.text
-    assert "Order found: order_id=ORD-12345" in caplog.text
+    assert "Order tool invoked" in caplog.text
+    assert "Order found" in caplog.text
+    assert "ORD-" not in caplog.text
 
 
 def test_order_tool_logs_not_found(db_storage, caplog):
@@ -53,7 +54,8 @@ def test_order_tool_logs_not_found(db_storage, caplog):
 
     get_order_status("ORD-99999")
 
-    assert "Order not found: order_id=ORD-99999" in caplog.text
+    assert "Order not found" in caplog.text
+    assert "ORD-" not in caplog.text
 
 
 def test_order_tool_logs_service_unavailable_without_leaking_error(
@@ -70,7 +72,8 @@ def test_order_tool_logs_service_unavailable_without_leaking_error(
     result = get_order_status("ORD-12345")
 
     assert result == {"error": "Order service temporarily unavailable"}
-    assert "Order lookup failed: order_id=ORD-12345" in caplog.text
+    assert "Order lookup failed" in caplog.text
     # The raw exception / connection details must not appear in the logs.
     assert "postgresql://" not in caplog.text
     assert "connection refused" not in caplog.text
+    assert "ORD-" not in caplog.text

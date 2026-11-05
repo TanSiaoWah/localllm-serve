@@ -43,8 +43,9 @@ def test_payment_tool_logs_success(db_storage, caplog):
 
     get_payment_status("PAY-88888")
 
-    assert "Payment tool invoked: payment_id=PAY-88888" in caplog.text
-    assert "Payment found: payment_id=PAY-88888" in caplog.text
+    assert "Payment tool invoked" in caplog.text
+    assert "Payment found" in caplog.text
+    assert "PAY-" not in caplog.text
 
 
 def test_payment_tool_logs_not_found(db_storage, caplog):
@@ -53,7 +54,8 @@ def test_payment_tool_logs_not_found(db_storage, caplog):
 
     get_payment_status("PAY-99999")
 
-    assert "Payment not found: payment_id=PAY-99999" in caplog.text
+    assert "Payment not found" in caplog.text
+    assert "PAY-" not in caplog.text
 
 
 def test_payment_tool_logs_service_unavailable_without_leaking_error(
@@ -70,7 +72,8 @@ def test_payment_tool_logs_service_unavailable_without_leaking_error(
     result = get_payment_status("PAY-88888")
 
     assert result == {"error": "Payment service temporarily unavailable"}
-    assert "Payment lookup failed: payment_id=PAY-88888" in caplog.text
+    assert "Payment lookup failed" in caplog.text
     # The raw exception / connection details must not appear in the logs.
     assert "postgresql://" not in caplog.text
     assert "connection refused" not in caplog.text
+    assert "PAY-" not in caplog.text

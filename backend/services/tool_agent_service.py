@@ -1,9 +1,11 @@
 import json
 import logging
 import re
+from contextlib import nullcontext
 
 from openai import APIConnectionError, OpenAI
 
+from backend.services.agent_trace import AgentTrace
 from backend.tools.kapruka_tools import (
     KaprukaMCPError,
     KaprukaValidationError,
@@ -156,8 +158,31 @@ def _build_tools_for_request(
     return []
 
 
-def ask_with_tools(ticket: dict, question: str, policy_context: str = "") -> dict:
+def ask_with_tools(
+    ticket: dict, question: str, policy_context: str = "", *, trace: AgentTrace | None = None
+) -> dict:
     """Send a ticket and question to Qwen, execute tools, and return the answer with verified facts."""
+    # A supplied recorder belongs to the caller; only standalone calls own its lifecycle.
+    with (AgentTrace() if trace is None else nullcontext(trace)) as trace:
+        try:
+            return _ask_with_tools(ticket, question, policy_context, trace)
+        except ToolAgentUnavailableError:
+            trace.error_category = "llm_unavailable"
+            raise
+        except UnknownToolError:
+            trace.error_category = "unauthorized_tool"
+            raise
+        except InvalidToolCallError:
+            trace.error_category = "invalid_tool_call"
+            raise
+        except ToolAgentMaxTurnsError:
+            trace.error_category = "max_turns_exceeded"
+            raise
+
+
+def _ask_with_tools(
+    ticket: dict, question: str, policy_context: str, trace: AgentTrace
+) -> dict:
     # Explicit identifiers the customer provided in the original question.
     # When present, model-requested tool calls must use exactly these values.
     customer_order_ids = ORDER_ID_PATTERN.findall(question)
@@ -212,12 +237,13 @@ def ask_with_tools(ticket: dict, question: str, policy_context: str = "") -> dic
     # Simple agent loop with a maximum of MAX_TURNS LLM turns
     for _ in range(MAX_TURNS):
         try:
-            response = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=messages,
-                tools=tools_for_request or None,
-                tool_choice="auto" if tools_for_request else None,
-            )
+            with trace.step("llm", "chat.completions.create"):
+                response = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=messages,
+                    tools=tools_for_request or None,
+                    tool_choice="auto" if tools_for_request else None,
+                )
         except APIConnectionError as exc:
             raise ToolAgentUnavailableError(
                 "Local vLLM server is unavailable"
@@ -278,7 +304,10 @@ def ask_with_tools(ticket: dict, question: str, policy_context: str = "") -> dic
                             )
                         result = {"error": ORDER_ID_MISMATCH_ERROR}
                     else:
-                        result = get_order_status(order_id)
+                        with trace.step("tool", "get_order_status") as step:
+                            result = get_order_status(order_id)
+                            if isinstance(result, dict) and "error" in result:
+                                step.error_category = "tool_result_error"
                 elif tool_name == "get_payment_status":
                     payment_id = arguments["payment_id"]
                     if not isinstance(payment_id, str):
@@ -298,22 +327,30 @@ def ask_with_tools(ticket: dict, question: str, policy_context: str = "") -> dic
                             )
                         result = {"error": PAYMENT_ID_MISMATCH_ERROR}
                     else:
-                        result = get_payment_status(payment_id)
+                        with trace.step("tool", "get_payment_status") as step:
+                            result = get_payment_status(payment_id)
+                            if isinstance(result, dict) and "error" in result:
+                                step.error_category = "tool_result_error"
                 elif tool_name == "kapruka_search_products":
                     if set(arguments) - {"query", "limit", "currency"}:
                         raise InvalidToolCallError("LLM returned an invalid tool call")
                     query = arguments["query"]
-                    try:
-                        # The adapter validates values before any MCP connection.
-                        result = search_kapruka_products(
-                            query,
-                            arguments.get("limit", 3),
-                            arguments.get("currency", "LKR"),
-                        )
-                    except KaprukaValidationError:
-                        result = {"error": "Invalid Kapruka product search arguments."}
-                    except KaprukaMCPError:
-                        result = {"error": "Kapruka product service temporarily unavailable."}
+                    with trace.step("tool", "kapruka_search_products") as step:
+                        try:
+                            # The adapter validates values before any MCP connection.
+                            result = search_kapruka_products(
+                                query,
+                                arguments.get("limit", 3),
+                                arguments.get("currency", "LKR"),
+                            )
+                        except KaprukaValidationError:
+                            step.error_category = "validation_error"
+                            result = {"error": "Invalid Kapruka product search arguments."}
+                        except KaprukaMCPError:
+                            step.error_category = "service_unavailable"
+                            result = {"error": "Kapruka product service temporarily unavailable."}
+                        if isinstance(result, dict) and "error" in result:
+                            step.error_category = step.error_category or "tool_result_error"
                     result = {
                         **result,
                         "source": "kapruka",

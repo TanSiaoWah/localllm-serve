@@ -15,12 +15,10 @@ logger = logging.getLogger(__name__)
 
 def get_payment_status(payment_id: str):
     """Return the payment details for a given payment ID from the database."""
-    logger.info("Payment tool invoked: payment_id=%s", payment_id)
+    logger.info("Payment tool invoked")
 
     if not payment_id.startswith("PAY-"):
-        logger.warning(
-            "Payment tool rejected invalid identifier: payment_id=%s", payment_id
-        )
+        logger.warning("Payment tool rejected invalid identifier")
         return {"error": "Invalid payment ID"}
 
     try:
@@ -31,14 +29,14 @@ def get_payment_status(payment_id: str):
             session.close()
     except Exception:
         # Return a controlled result and never leak database-specific details.
-        logger.error("Payment lookup failed: payment_id=%s", payment_id)
+        logger.error("Payment lookup failed")
         return {"error": "Payment service temporarily unavailable"}
 
     if payment is None:
-        logger.info("Payment not found: payment_id=%s", payment_id)
+        logger.info("Payment not found")
         return {"error": "Payment not found"}
 
-    logger.info("Payment found: payment_id=%s", payment_id)
+    logger.info("Payment found")
     return {
         "status": payment.status,
         "amount": float(payment.amount),

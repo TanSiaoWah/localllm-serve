@@ -15,10 +15,10 @@ logger = logging.getLogger(__name__)
 
 def get_order_status(order_id: str):
     """Return the order details for a given order ID from the database."""
-    logger.info("Order tool invoked: order_id=%s", order_id)
+    logger.info("Order tool invoked")
 
     if not order_id.startswith("ORD-"):
-        logger.warning("Order tool rejected invalid identifier: order_id=%s", order_id)
+        logger.warning("Order tool rejected invalid identifier")
         return {"error": "Invalid order ID"}
 
     try:
@@ -29,14 +29,14 @@ def get_order_status(order_id: str):
             session.close()
     except Exception:
         # Return a controlled result and never leak database-specific details.
-        logger.error("Order lookup failed: order_id=%s", order_id)
+        logger.error("Order lookup failed")
         return {"error": "Order service temporarily unavailable"}
 
     if order is None:
-        logger.info("Order not found: order_id=%s", order_id)
+        logger.info("Order not found")
         return {"error": "Order not found"}
 
-    logger.info("Order found: order_id=%s", order_id)
+    logger.info("Order found")
     return {
         "product": order.product,
         "status": order.status,
