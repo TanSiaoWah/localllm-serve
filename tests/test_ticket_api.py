@@ -1,7 +1,9 @@
 import logging
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
+from openai import APITimeoutError
 
 from backend.main import app
 import backend.services.tool_agent_service as tool_agent_service
@@ -172,7 +174,7 @@ def test_ask_ticket_forwards_ordered_policy_context_and_preserves_facts(monkeypa
         assert response.json() == {
             "ticket_id": 1, "answer": "Supported answer.", "verified_facts": facts
         }
-    assert retriever.calls == [(question, 3), (question, 3)]
+    assert retriever.calls == [(question.strip(), 3), (question.strip(), 3)]
     expected_context = (
         "[Source: return_policy.md (chunk 3)]\n  First passage.\n\n\n"
         "[Source: shipping_policy.md (chunk 1)]\nSecond passage.\n- Condition.\n\n"
@@ -181,7 +183,7 @@ def test_ask_ticket_forwards_ordered_policy_context_and_preserves_facts(monkeypa
     assert len(calls) == 2
     for ticket, forwarded_question, context in calls:
         assert ticket["id"] == 1
-        assert forwarded_question == question
+        assert forwarded_question == question.strip()
         assert context == expected_context
 
 
@@ -224,3 +226,34 @@ def test_missing_ticket_does_not_retrieve_or_call_agent(monkeypatch):
     assert response.status_code == 404
     assert response.json() == {"detail": "Ticket not found"}
     assert retriever.calls == []
+
+
+@pytest.mark.parametrize("question", ["", " \t\n ", "x" * 2001, None])
+def test_invalid_question_never_retrieves_or_calls_llm(monkeypatch, question):
+    retriever = Mock()
+    agent = Mock(side_effect=AssertionError("Invalid request reached agent"))
+    llm = Mock(side_effect=AssertionError("Invalid request reached LLM"))
+    monkeypatch.setattr(app.state, "policy_retriever", retriever)
+    monkeypatch.setattr(tool_agent_service, "ask_with_tools", agent)
+    monkeypatch.setattr(tool_agent_service.client.chat.completions, "create", llm)
+    response = TestClient(app).post("/tickets/1/ask", json={"question": question})
+    assert response.status_code == 422
+    retriever.retrieve.assert_not_called()
+    agent.assert_not_called()
+    llm.assert_not_called()
+
+
+def test_maximum_question_accepted_and_trimmed(monkeypatch):
+    agent = Mock(return_value={"answer": "Answer", "verified_facts": []})
+    monkeypatch.setattr(tool_agent_service, "ask_with_tools", agent)
+    response = TestClient(app).post("/tickets/1/ask", json={"question": "  " + "x" * 2000 + "  "})
+    assert response.status_code == 200
+    assert agent.call_args.args[1] == "x" * 2000
+
+
+def test_ask_timeout_returns_service_unavailable(monkeypatch):
+    llm = Mock(side_effect=APITimeoutError(request=None))
+    monkeypatch.setattr(tool_agent_service.client.chat.completions, "create", llm)
+    response = TestClient(app).post("/tickets/1/ask", json={"question": "Help me"})
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Local LLM service is unavailable"}

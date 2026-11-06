@@ -1,13 +1,17 @@
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator
+
+
+TicketSubject = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+TicketMessage = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4000)]
 
 
 # Pydantic model defining the expected fields for creating a new ticket
 class TicketCreate(BaseModel):
     customer_name: str = Field(min_length=1)
-    subject: str = Field(min_length=1)
-    message: str = Field(min_length=1)
+    subject: TicketSubject
+    message: TicketMessage
 
     @field_validator("customer_name")
     def customer_name_not_whitespace(cls, value: str) -> str:
@@ -17,28 +21,12 @@ class TicketCreate(BaseModel):
             raise ValueError("Customer name cannot be empty")
         return stripped
 
-    @field_validator("subject")
-    def subject_not_whitespace(cls, value: str) -> str:
-        """Strip surrounding whitespace and reject whitespace-only subjects."""
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("Subject cannot be empty")
-        return stripped
-
-    @field_validator("message")
-    def message_not_whitespace(cls, value: str) -> str:
-        """Strip surrounding whitespace and reject whitespace-only messages."""
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("Message cannot be empty")
-        return stripped
-
 
 # Pydantic model for updating tickets — all fields are optional
 class TicketUpdate(BaseModel):
     customer_name: Optional[str] = None
-    subject: Optional[str] = None
-    message: Optional[str] = None
+    subject: Optional[TicketSubject] = None
+    message: Optional[TicketMessage] = None
     status: Optional[str] = None
 
 
@@ -51,7 +39,7 @@ class TicketAnalysis(BaseModel):
 
 # Pydantic model for asking the tool-capable agent a question about a ticket
 class TicketQuestion(BaseModel):
-    question: str
+    question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
 
 
 # Pydantic model for a single verified backend fact returned by a tool

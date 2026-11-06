@@ -1,7 +1,7 @@
 import types
 
 import pytest
-from openai import APIConnectionError
+from openai import APIConnectionError, APITimeoutError
 
 import backend.services.ai_service as ai_service
 from backend.services.ai_service import (
@@ -57,16 +57,25 @@ def test_analyze_ticket_invalid_json(monkeypatch, ticket):
         ai_service.analyze_ticket(ticket)
 
 
-def test_analyze_ticket_connection_error(monkeypatch, ticket):
+@pytest.mark.parametrize("error_type", [APIConnectionError, APITimeoutError])
+def test_analyze_ticket_connection_error(monkeypatch, ticket, error_type):
     """analyze_ticket() raises AIServiceUnavailableError when the LLM server is unreachable."""
 
     def fake_create(**kwargs):
-        raise APIConnectionError(request=None)
+        raise error_type(request=None)
 
     monkeypatch.setattr(ai_service.client.chat.completions, "create", fake_create)
 
     with pytest.raises(AIServiceUnavailableError):
         ai_service.analyze_ticket(ticket)
+
+
+def test_analysis_client_timeout_and_retry_configuration():
+    assert ai_service.client.timeout.connect == 5.0
+    assert ai_service.client.timeout.read == 120.0
+    assert ai_service.client.timeout.write == 30.0
+    assert ai_service.client.timeout.pool == 5.0
+    assert ai_service.client.max_retries == 0
 
 
 def test_analyze_ticket_schema_validation_failure(monkeypatch, ticket):

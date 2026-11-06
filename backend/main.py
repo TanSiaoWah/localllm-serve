@@ -2,7 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.tickets import router as tickets_router
@@ -55,6 +55,13 @@ app.add_middleware(
 def health():
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+@app.get("/ready")
+def ready(request: Request):
+    """Report RAG startup status without performing initialization or I/O."""
+    retriever = getattr(request.app.state, "policy_retriever", None)
+    return {"status": "ready" if retriever is not None else "degraded"}
 
 
 app.include_router(tickets_router)

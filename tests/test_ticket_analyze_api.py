@@ -1,4 +1,6 @@
 from fastapi.testclient import TestClient
+from openai import APITimeoutError
+from unittest.mock import Mock
 
 from backend.main import app
 import backend.services.ai_service as ai_service
@@ -58,5 +60,13 @@ def test_analyze_ticket_service_unavailable(monkeypatch):
     client = TestClient(app)
     response = client.post("/tickets/1/analyze")
 
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Local LLM service is unavailable"}
+
+
+def test_analyze_timeout_returns_service_unavailable(monkeypatch):
+    llm = Mock(side_effect=APITimeoutError(request=None))
+    monkeypatch.setattr(ai_service.client.chat.completions, "create", llm)
+    response = TestClient(app).post("/tickets/1/analyze")
     assert response.status_code == 503
     assert response.json() == {"detail": "Local LLM service is unavailable"}

@@ -4,7 +4,7 @@ import os
 import re
 from contextlib import nullcontext
 
-from openai import APIConnectionError, OpenAI
+from openai import APIConnectionError, OpenAI, Timeout
 
 from backend.services.agent_trace import AgentTrace
 from backend.tools.kapruka_tools import (
@@ -30,6 +30,8 @@ MAX_TURNS = 5
 client = OpenAI(
     base_url=os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1"),
     api_key="EMPTY",
+    timeout=Timeout(connect=5.0, read=120.0, write=30.0, pool=5.0),
+    max_retries=0,
 )
 
 # Model served by vLLM

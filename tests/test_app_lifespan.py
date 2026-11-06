@@ -182,6 +182,39 @@ def test_rag_failure_logs_and_preserves_routes(monkeypatch, caplog, failure_stag
     assert any(record.exc_info for record in caplog.records if record.name == "backend.main")
 
 
+@pytest.mark.parametrize("failure_stage", [None, "factory", "initialize"])
+def test_readiness_reports_rag_startup_status_without_reinitializing(monkeypatch, failure_stage):
+    from unittest.mock import Mock
+
+    retriever = Mock()
+    factory = Mock(return_value=retriever)
+    failure = RuntimeError("Private model initialization details")
+    if failure_stage == "factory":
+        factory.side_effect = failure
+    elif failure_stage == "initialize":
+        retriever.initialize.side_effect = failure
+    monkeypatch.setattr(main, "create_policy_retriever", factory)
+    # Startup must discard any retriever left by an earlier lifespan.
+    monkeypatch.setattr(main.app.state, "policy_retriever", object(), raising=False)
+
+    with TestClient(main.app) as client:
+        for _ in range(2):
+            response = client.get("/ready")
+            assert response.status_code == 200
+            assert response.json() == {
+                "status": "ready" if failure_stage is None else "degraded"
+            }
+        health = client.get("/health")
+        assert health.status_code == 200
+        assert health.json() == {"status": "ok"}
+        factory.assert_called_once_with()
+        if failure_stage == "factory":
+            retriever.initialize.assert_not_called()
+        else:
+            retriever.initialize.assert_called_once_with()
+        retriever.retrieve.assert_not_called()
+
+
 def test_distinct_applications_have_distinct_retrievers(monkeypatch):
     retrievers = []
     class FakeRetriever:

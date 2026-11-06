@@ -4,7 +4,7 @@ import types
 from unittest.mock import Mock
 
 import pytest
-from openai import APIConnectionError
+from openai import APIConnectionError, APITimeoutError
 
 import backend.services.tool_agent_service as tool_agent_service
 import backend.tools.kapruka_tools as kapruka_tools
@@ -442,11 +442,12 @@ def test_ask_with_tools_missing_required_argument(monkeypatch, ticket):
         )
 
 
-def test_ask_with_tools_connection_error(monkeypatch, ticket):
+@pytest.mark.parametrize("error_type", [APIConnectionError, APITimeoutError])
+def test_ask_with_tools_connection_error(monkeypatch, ticket, error_type):
     """ask_with_tools() raises ToolAgentUnavailableError when the LLM server is unreachable."""
 
     def fake_create(**kwargs):
-        raise APIConnectionError(request=None)
+        raise error_type(request=None)
 
     monkeypatch.setattr(
         tool_agent_service.client.chat.completions, "create", fake_create
@@ -457,6 +458,14 @@ def test_ask_with_tools_connection_error(monkeypatch, ticket):
             ticket,
             "Where is order ORD-12345?",
         )
+
+
+def test_agent_client_timeout_and_retry_configuration():
+    assert tool_agent_service.client.timeout.connect == 5.0
+    assert tool_agent_service.client.timeout.read == 120.0
+    assert tool_agent_service.client.timeout.write == 30.0
+    assert tool_agent_service.client.timeout.pool == 5.0
+    assert tool_agent_service.client.max_retries == 0
 
 
 def test_ask_with_tools_max_turns(monkeypatch, ticket):

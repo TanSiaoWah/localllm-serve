@@ -1,7 +1,7 @@
 import json
 import os
 
-from openai import APIConnectionError, OpenAI
+from openai import APIConnectionError, OpenAI, Timeout
 from pydantic import ValidationError
 
 from backend.models import TicketAnalysis
@@ -10,6 +10,8 @@ from backend.models import TicketAnalysis
 client = OpenAI(
     base_url=os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1"),
     api_key="EMPTY",
+    timeout=Timeout(connect=5.0, read=120.0, write=30.0, pool=5.0),
+    max_retries=0,
 )
 
 MODEL_NAME = "Qwen/Qwen3-8B-AWQ"

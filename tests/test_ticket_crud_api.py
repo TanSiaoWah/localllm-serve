@@ -173,3 +173,37 @@ def test_delete_nonexistent_ticket():
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Ticket not found"}
+
+
+@pytest.mark.parametrize("method,path", [("post", "/tickets/"), ("put", "/tickets/1")])
+@pytest.mark.parametrize("field,limit", [("subject", 200), ("message", 4000)])
+@pytest.mark.parametrize("invalid_kind", ["empty", "whitespace", "oversized"])
+def test_invalid_ticket_text_returns_422_without_writes(method, path, field, limit, invalid_kind, db_storage):
+    client = TestClient(app)
+    original = client.get("/tickets/1").json()
+    value = {"empty": "", "whitespace": " \t\n ", "oversized": "x" * (limit + 1)}[invalid_kind]
+    payload = {"customer_name": "Alice", "subject": "Issue", "message": "Help"} if method == "post" else {}
+    response = getattr(client, method)(path, json={**payload, field: value})
+    assert response.status_code == 422
+    assert _count_tickets(db_storage) == 3
+    assert client.get("/tickets/1").json() == original
+
+
+@pytest.mark.parametrize("method,path", [("post", "/tickets/"), ("put", "/tickets/1")])
+def test_maximum_ticket_text_accepted_and_trimmed(method, path):
+    payload = {"subject": "  " + "s" * 200 + "  ", "message": "\n" + "m" * 4000 + "\n"}
+    if method == "post":
+        payload["customer_name"] = "Alice"
+    response = getattr(TestClient(app), method)(path, json=payload)
+    assert response.status_code == 200
+    assert response.json()["subject"] == "s" * 200
+    assert response.json()["message"] == "m" * 4000
+
+
+@pytest.mark.parametrize("payload", [{}, {"customer_name": None, "subject": None, "message": None, "status": None}])
+def test_empty_or_null_update_preserves_ticket(payload):
+    client = TestClient(app)
+    original = client.get("/tickets/1").json()
+    response = client.put("/tickets/1", json=payload)
+    assert response.status_code == 200
+    assert response.json() == original
