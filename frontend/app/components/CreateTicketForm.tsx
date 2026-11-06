@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+
 export default function CreateTicketForm() {
   const router = useRouter();
   const [customerName, setCustomerName] = useState("");
@@ -28,7 +30,7 @@ export default function CreateTicketForm() {
     setError("");
 
     try {
-      const response = await fetch("http://localhost:8080/tickets/", {
+      const response = await fetch(`${apiBaseUrl}/tickets/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

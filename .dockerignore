@@ -1,0 +1,11 @@
+# Backend context: only runtime source and requirements enter the build.
+**
+!requirements.txt
+!backend/
+!backend/**
+**/.env
+**/.env.*
+**/__pycache__
+**/*.pyc
+backend/Dockerfile
+backend/README.md

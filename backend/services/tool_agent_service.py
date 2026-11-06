@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 from contextlib import nullcontext
 
@@ -27,7 +28,7 @@ MAX_TURNS = 5
 
 # Connect to the local vLLM server
 client = OpenAI(
-    base_url="http://localhost:8000/v1",
+    base_url=os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1"),
     api_key="EMPTY",
 )
 

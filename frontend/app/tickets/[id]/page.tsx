@@ -31,11 +31,12 @@ export default async function TicketPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:8080";
 
   let ticket: Ticket | null = null;
 
   try {
-    const response = await fetch(`http://localhost:8080/tickets/${id}`, {
+    const response = await fetch(`${apiBaseUrl}/tickets/${id}`, {
       cache: "no-store",
     });
     if (response.ok) {

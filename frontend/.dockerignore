@@ -1,0 +1,14 @@
+node_modules
+.next
+out
+build
+.git
+.env
+.env.*
+*.pem
+*.tsbuildinfo
+*-debug.log*
+Dockerfile
+README.md
+AGENTS.md
+CLAUDE.md

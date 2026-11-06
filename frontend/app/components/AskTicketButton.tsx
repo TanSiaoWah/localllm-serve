@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+
 type AskTicketButtonProps = {
   ticketId: number;
   question: string;
@@ -180,7 +182,7 @@ export default function AskTicketButton({
 
     try {
       const response = await fetch(
-        `http://localhost:8080/tickets/${ticketId}/ask`,
+        `${apiBaseUrl}/tickets/${ticketId}/ask`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

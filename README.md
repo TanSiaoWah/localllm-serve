@@ -61,6 +61,39 @@ npm run dev
 
 Open [localhost:3000](http://localhost:3000), select a ticket, and use **Generate AI Reply**. Review the draft before using it. Check the backend at [GET /health](http://localhost:8080/health).
 
+## Run with Docker
+
+Docker Compose runs FastAPI on port 8080 and Next.js on port 3000. vLLM stays
+in WSL2; Supabase PostgreSQL and Kapruka MCP remain external. Neither container
+requires GPU access.
+
+Before starting, run Docker Desktop with Linux containers enabled and configure
+`DATABASE_URL` in the gitignored `backend/.env` (see `backend/.env.example`).
+Credentials are supplied at runtime, not included in images. Run these commands
+from the repository root:
+
+```cmd
+docker compose up --build -d
+docker compose ps
+docker compose logs --tail 100 backend frontend
+```
+
+Check the [frontend](http://localhost:3000) and
+[backend health endpoint](http://localhost:8080/health). Ports are published only
+on this computer.
+
+The backend reaches host-side vLLM through `host.docker.internal:8000`; Windows/WSL2
+forwarding and firewall settings must allow access. First startup downloads and
+initializes the CPU RAG model, which may delay readiness. Model files persist in
+a Docker volume; inspect backend logs for initialization errors. A healthy API
+does not confirm external integrations or RAG are working.
+
+Stop containers while retaining the model cache:
+
+```cmd
+docker compose down
+```
+
 ## Evaluation and observability
 
 - [RAG evaluation](scripts/evaluate_rag.py) ([sample cases](scripts/rag_eval_cases.json)) and [agent evaluation](scripts/evaluate_qwen_agent.py) exercise model behavior using local services.

@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+
 type TicketAnalysis = {
   issue: string;
   category: string;
@@ -40,7 +42,7 @@ export default function AnalyzeTicketButton({ ticketId }: { ticketId: number }) 
     setLoading(true);
     try {
       const response = await fetch(
-        `http://localhost:8080/tickets/${ticketId}/analyze`,
+        `${apiBaseUrl}/tickets/${ticketId}/analyze`,
         {
           method: "POST",
         }

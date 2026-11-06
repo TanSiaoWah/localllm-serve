@@ -1,4 +1,5 @@
 import json
+import os
 
 from openai import APIConnectionError, OpenAI
 from pydantic import ValidationError
@@ -7,7 +8,7 @@ from backend.models import TicketAnalysis
 
 
 client = OpenAI(
-    base_url="http://localhost:8000/v1",
+    base_url=os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1"),
     api_key="EMPTY",
 )
 

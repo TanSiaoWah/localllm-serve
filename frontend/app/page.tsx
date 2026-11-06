@@ -4,9 +4,10 @@ import TicketDashboard, { type Ticket } from "./components/TicketDashboard";
 export default async function Home() {
   let backendConnected = false;
   let tickets: Ticket[] = [];
+  const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:8080";
 
   try {
-    const response = await fetch("http://localhost:8080/health", {
+    const response = await fetch(`${apiBaseUrl}/health`, {
       cache: "no-store",
     });
     const data = await response.json();
@@ -18,7 +19,7 @@ export default async function Home() {
   }
 
   try {
-    const response = await fetch("http://localhost:8080/tickets/", {
+    const response = await fetch(`${apiBaseUrl}/tickets/`, {
       cache: "no-store",
     });
     if (response.ok) {

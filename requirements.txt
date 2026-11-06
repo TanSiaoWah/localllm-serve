@@ -1,0 +1,19 @@
+# Backend runtime pins from the Python 3.11 development environment.
+# The +cpu build prevents PyTorch from pulling in CUDA runtime packages.
+--extra-index-url https://download.pytorch.org/whl/cpu
+fastapi==0.141.1
+uvicorn==0.54.0
+httpx==0.28.1
+httpx2==2.13.1
+mcp==2.3.0
+numpy==2.4.6
+openai==3.19.2
+# SQLAlchemy 2.1 selects Psycopg 3 for bare postgresql:// URLs.
+psycopg[binary]==3.3.6
+psycopg2-binary==2.9.12
+pydantic==2.13.5
+python-dotenv==1.2.3
+SQLAlchemy==2.1.1
+sentence-transformers==6.2.0
+transformers==5.20.2
+torch==2.14.1+cpu
